@@ -29,6 +29,12 @@
 
 - テスト: `pytest`
 
+## 主要オプション速見表
+- `--llm` / `--rewrite` / `--llm-temperature` / `--llm-timeout`
+- アライン調整: `--align-thresholds 92,85,80`, `--align-gap 0.1`, `--align-fallback-padding 0.3`
+- 出力・進捗: `--output-dir`, `--progress-dir`, `--subtitle-dir`（PocRunOptionsで統一）
+- 一括掃除: `cleanup` サブコマンドまたは `scripts/cleanup_temp.py`
+
 ## 運用メモ
 - kotoba / mlx ランナーは現状 OpenAI Whisper へフォールバック実行。ネイティブ実装は今後対応。
 - アライン調整: `--align-thresholds`（カンマ区切り）、`--align-gap`、`--align-fallback-padding` で調整可能。デフォルトは `90,85,80 / 0.1 / 0.3`。
