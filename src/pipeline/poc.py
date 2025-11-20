@@ -1,7 +1,7 @@
 """Shared helpers for the Phase 1 PoC transcription flow."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 import json
 import logging
@@ -10,6 +10,14 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 from src.blocking.builders import sentences_from_words
 from src.blocking.splitter import Block, BlockSplitter
+from src.alignment import align_to_srt
+from src.llm.formatter import (
+    FormatterError,
+    FormatterRequest,
+    FormatValidationError,
+    LLMFormatter,
+    FormattedLine,
+)
 from src.transcribe import (
     TranscriptionConfig,
     TranscriptionResult,
@@ -35,12 +43,14 @@ class PocRunOptions:
     chunk_size: int | None = None
     output_dir: Path = Path("temp/poc_samples")
     progress_dir: Path = Path("temp/progress")
+    subtitle_dir: Path = Path("output")
     simulate: bool = True
     verbose: bool = False
     timestamp: str | None = None
     resume_source: Path | None = None
     llm_provider: str | None = None
     rewrite: bool | None = None
+    align_kwargs: Dict[str, Any] = field(default_factory=dict)
 
     def normalized_timestamp(self) -> str:
         return self.timestamp or datetime.now().strftime("%Y%m%dT%H%M%S")
@@ -76,6 +86,8 @@ def execute_poc_run(
     audio_files: Sequence[Path],
     models: Sequence[str],
     options: PocRunOptions,
+    *,
+    formatter: LLMFormatter | None = None,
 ) -> List[Path]:
     """Execute transcription for the provided audio files and models."""
     if not audio_files:
@@ -86,6 +98,8 @@ def execute_poc_run(
     timestamp = options.normalized_timestamp()
     splitter = BlockSplitter()
     saved_paths: List[Path] = []
+    # LLM整形は本番API応答のゆらぎを許容するため、デフォルトは strict=False にして例外で止まらないようにする。
+    formatter = formatter or LLMFormatter(strict_validation=False)
 
     for slug in models:
         runner = get_runner(slug)
@@ -105,13 +119,41 @@ def execute_poc_run(
             run_id = f"{audio_path.stem}_{slug}_{timestamp}"
             output_path = options.output_dir / f"{run_id}.json"
             save_result(result, output_path, blocks=block_payload)
+
+            subtitle_path: Path | None = None
+            if options.llm_provider:
+                formatted_lines = _format_blocks(
+                    blocks=blocks,
+                    formatter=formatter,
+                    llm_provider=options.llm_provider,
+                    rewrite=options.rewrite or False,
+                    run_id=run_id,
+                )
+                if formatted_lines:
+                    subtitle_path = options.subtitle_dir / f"{run_id}.srt"
+                    subtitle_text = align_to_srt(
+                        formatted_lines,
+                        result.words,
+                        **(options.align_kwargs or {}),
+                    )
+                    subtitle_path.parent.mkdir(parents=True, exist_ok=True)
+                    subtitle_path.write_text(subtitle_text, encoding="utf-8")
+                    logger.info("SRTを保存しました: %s", subtitle_path)
+                else:
+                    logger.warning("LLM整形結果が空のためSRTを生成しませんでした: %s", run_id)
+
             save_progress_snapshot(
                 run_id=run_id,
                 audio_path=audio_path,
                 runner_slug=slug,
                 blocks=block_payload,
                 progress_dir=options.progress_dir,
-                metadata=_build_progress_metadata(options, result.metadata, timestamp),
+                metadata=_build_progress_metadata(
+                    options,
+                    result.metadata,
+                    timestamp,
+                    subtitle_path=subtitle_path,
+                ),
                 llm_provider=options.llm_provider,
             )
             saved_paths.append(output_path)
@@ -234,6 +276,8 @@ def _build_progress_metadata(
     options: PocRunOptions,
     base_metadata: Dict[str, Any],
     timestamp: str,
+    *,
+    subtitle_path: Path | None = None,
 ) -> Dict[str, Any]:
     metadata: Dict[str, Any] = dict(base_metadata or {})
     metadata.setdefault("requested_at", timestamp)
@@ -246,7 +290,37 @@ def _build_progress_metadata(
     }
     if options.resume_source:
         metadata["resume_source"] = str(options.resume_source)
+    if subtitle_path:
+        metadata["subtitle_path"] = str(subtitle_path)
     return metadata
+
+
+def _format_blocks(
+    *,
+    blocks: Sequence[Block],
+    formatter: LLMFormatter,
+    llm_provider: str,
+    rewrite: bool,
+    run_id: str,
+) -> List[FormattedLine]:
+    formatted: List[FormattedLine] = []
+    for idx, block in enumerate(blocks, start=1):
+        request = FormatterRequest(
+            block_text=block.text,
+            provider=llm_provider,
+            rewrite=rewrite,
+            metadata={"run_id": run_id, "block_index": idx},
+        )
+        try:
+            result = formatter.format_block(request)
+        except FormatValidationError as exc:
+            logger.warning("LLM出力にバリデーションエラー (block=%s): %s", idx, exc)
+            continue
+        except FormatterError as exc:
+            logger.error("LLM整形に失敗しました (block=%s): %s", idx, exc)
+            continue
+        formatted.extend(result.lines)
+    return formatted
 
 
 __all__ = [

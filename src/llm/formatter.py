@@ -64,7 +64,7 @@ class FormatterRequest:
     metadata: Dict[str, Any] = field(default_factory=dict)
     line_max_chars: float = 17.0
     max_retries: int = 3
-    temperature: float | None = None
+    temperature: float | None = None  # None の場合はプロバイダー規定値を使用
 
 
 @dataclass(slots=True)

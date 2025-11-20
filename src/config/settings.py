@@ -2,8 +2,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import lru_cache
 import os
+from functools import lru_cache
+
+try:  # pragma: no cover - 環境に応じてロード
+    from dotenv import load_dotenv
+
+    load_dotenv()  # リポジトリ直下の .env を読み込む
+except Exception:
+    pass
 
 
 @dataclass(slots=True)

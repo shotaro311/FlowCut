@@ -21,9 +21,9 @@ def _extract_text_blocks(content: Any) -> List[str]:
     for block in content:
         if not isinstance(block, dict):
             continue
-        if block.get("type") != "text":
-            continue
         text = block.get("text")
+        if block.get("type") not in (None, "text"):
+            continue
         if isinstance(text, str):
             stripped = text.strip()
             if stripped:
@@ -64,29 +64,36 @@ class AnthropicClaudeProvider(BaseLLMProvider):
                     ],
                 }
             ],
-            "temperature": request.temperature if request.temperature is not None else 0.2,
             "max_tokens": max_tokens,
         }
+        if request.temperature is not None:
+            payload["temperature"] = request.temperature
 
         endpoint = settings.anthropic_api_base.rstrip("/") + "/messages"
-        response = requests.post(
-            endpoint,
-            headers={
-                "x-api-key": settings.anthropic_api_key,
-                "anthropic-version": _ANTHROPIC_VERSION,
-                "content-type": "application/json",
-            },
-            json=payload,
-            timeout=settings.request_timeout,
-        )
+        try:
+            response = requests.post(
+                endpoint,
+                headers={
+                    "x-api-key": settings.anthropic_api_key,
+                    "anthropic-version": _ANTHROPIC_VERSION,
+                    "content-type": "application/json",
+                },
+                json=payload,
+                timeout=settings.request_timeout,
+            )
+        except requests.RequestException as exc:
+            raise FormatterError(f"Anthropic API リクエストに失敗しました: {exc}") from exc
         if response.status_code >= 400:
             raise FormatterError(f"Anthropic API エラー: {response.status_code} {response.text}")
 
         data: Dict[str, Any] = response.json()
         texts = _extract_text_blocks(data.get("content"))
-        if not texts:
-            raise FormatterError(f"Anthropic API 応答を解釈できません: {json.dumps(data)}")
-        return "\n".join(texts)
+        if texts:
+            return "\n".join(texts)
+        # 一部のモック/旧仕様では top-level text がある場合がある
+        if isinstance(data.get("text"), str) and data["text"].strip():
+            return data["text"].strip()
+        raise FormatterError(f"Anthropic API 応答を解釈できません: {json.dumps(data)}")
 
 
 __all__ = ["AnthropicClaudeProvider"]
