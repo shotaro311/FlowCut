@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 
 from .base import BaseTranscribeRunner, TranscriptionConfig, TranscriptionResult, register_runner
+from .mlx_common import run_mlx_whisper
 
 logger = logging.getLogger(__name__)
 
@@ -19,14 +20,4 @@ class KotobaRunner(BaseTranscribeRunner):
     def transcribe(self, audio_path: Path, config: TranscriptionConfig) -> TranscriptionResult:
         if config.simulate:
             return self.simulate_transcription(audio_path, config)
-        # 当面は OpenAI Whisper へのフォールバックで実行
-        from .openai_runner import transcribe_via_openai_whisper
-
-        logger.info("[kotoba] OpenAI Whisper へフォールバックして実行します")
-        return transcribe_via_openai_whisper(
-            audio_path,
-            config,
-            runner_slug=self.slug,
-            runner_model=self.default_model,
-            metadata_extra={"fallback": "openai_whisper"},
-        )
+        return run_mlx_whisper(audio_path, model_id=self.default_model, language=config.language)
