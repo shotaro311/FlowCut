@@ -102,5 +102,29 @@ def run(
     execute_poc_run(audio_files, model_slugs, options)
 
 
+@app.command("cleanup")
+def cleanup_command(
+    days: int = typer.Option(3, help='この日数より古いファイルを削除'),
+    paths: List[Path] = typer.Argument(
+        None,
+        help='掃除対象パス（未指定時は temp/poc_samples, temp/progress, logs）',
+    ),
+    dry_run: bool = typer.Option(False, '--dry-run', help='削除せず候補のみ表示'),
+) -> None:
+    """temp / logs の古いファイルをまとめて削除する."""
+    try:
+        from src.utils.cleanup import cleanup_paths
+    except ImportError as exc:  # pragma: no cover - defensive
+        raise typer.Exit(code=1) from exc
+
+    default_paths = [Path('temp/poc_samples'), Path('temp/progress'), Path('logs')]
+    targets = paths or default_paths
+    removed = cleanup_paths(targets, older_than_days=days, dry_run=dry_run)
+    action = "would remove" if dry_run else "removed"
+    typer.echo(f"{action}: {len(removed)} files")
+    for p in removed:
+        typer.echo(f"- {p}")
+
+
 if __name__ == '__main__':  # pragma: no cover
     app()
