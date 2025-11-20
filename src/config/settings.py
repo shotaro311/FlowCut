@@ -1,0 +1,56 @@
+"""Environment-driven application settings."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from functools import lru_cache
+import os
+
+
+@dataclass(slots=True)
+class LLMSettings:
+    default_provider: str = "openai"
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-4o-mini"
+    openai_base_url: str = "https://api.openai.com/v1"
+    google_api_key: str | None = None
+    google_model: str = "gemini-1.5-flash"
+    google_api_base: str = "https://generativelanguage.googleapis.com/v1beta"
+    anthropic_api_key: str | None = None
+    anthropic_model: str = "claude-3-5-sonnet-20241022"
+    request_timeout: float = 30.0
+
+
+@dataclass(slots=True)
+class AppSettings:
+    llm: LLMSettings
+
+
+def _env(key: str, default: str | None = None) -> str | None:
+    value = os.getenv(key)
+    if value is None:
+        return default
+    return value
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> AppSettings:
+    llm = LLMSettings(
+        default_provider=_env("DEFAULT_LLM_PROVIDER", "openai"),
+        openai_api_key=_env("OPENAI_API_KEY"),
+        openai_model=_env("OPENAI_MODEL", "gpt-4o-mini"),
+        openai_base_url=_env("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        google_api_key=_env("GOOGLE_API_KEY"),
+        google_model=_env("GOOGLE_MODEL", "gemini-1.5-flash"),
+        google_api_base=_env("GOOGLE_API_BASE", "https://generativelanguage.googleapis.com/v1beta"),
+        anthropic_api_key=_env("ANTHROPIC_API_KEY"),
+        anthropic_model=_env("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022"),
+        request_timeout=float(_env("LLM_REQUEST_TIMEOUT", "30.0")),
+    )
+    return AppSettings(llm=llm)
+
+
+def reload_settings() -> None:
+    get_settings.cache_clear()
+
+
+__all__ = ["AppSettings", "LLMSettings", "get_settings", "reload_settings"]
