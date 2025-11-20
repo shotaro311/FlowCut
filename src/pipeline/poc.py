@@ -39,6 +39,8 @@ class PocRunOptions:
     verbose: bool = False
     timestamp: str | None = None
     resume_source: Path | None = None
+    llm_provider: str | None = None
+    rewrite: bool | None = None
 
     def normalized_timestamp(self) -> str:
         return self.timestamp or datetime.now().strftime("%Y%m%dT%H%M%S")
@@ -110,6 +112,7 @@ def execute_poc_run(
                 blocks=block_payload,
                 progress_dir=options.progress_dir,
                 metadata=_build_progress_metadata(options, result.metadata, timestamp),
+                llm_provider=options.llm_provider,
             )
             saved_paths.append(output_path)
     return saved_paths
@@ -158,12 +161,14 @@ def save_progress_snapshot(
     blocks: List[dict],
     progress_dir: Path,
     metadata: dict,
+    llm_provider: str | None = None,
 ) -> None:
     record = create_progress_record(
         run_id=run_id,
         audio_file=str(audio_path),
         model=runner_slug,
         total_blocks=len(blocks),
+        llm_provider=llm_provider,
         metadata=metadata,
     )
     if blocks:
@@ -205,6 +210,12 @@ def prepare_resume_run(
         verbose=base_options.verbose,
         timestamp=timestamp,
         resume_source=progress_path,
+        llm_provider=base_options.llm_provider or option_meta.get("llm_provider"),
+        rewrite=(
+            base_options.rewrite
+            if base_options.rewrite is not None
+            else option_meta.get("rewrite")
+        ),
     )
     return record, audio_files, [record.model], resume_options
 
@@ -230,6 +241,8 @@ def _build_progress_metadata(
         "language": options.language,
         "chunk_size": options.chunk_size,
         "simulate": options.simulate,
+        "llm_provider": options.llm_provider,
+        "rewrite": options.rewrite,
     }
     if options.resume_source:
         metadata["resume_source"] = str(options.resume_source)

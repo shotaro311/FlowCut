@@ -16,6 +16,7 @@ from src.pipeline import (
     prepare_resume_run,
     resolve_models,
 )
+from src.llm import available_providers as list_llm_providers
 
 app = typer.Typer(help="Flow Cut コマンドラインインターフェース")
 
@@ -31,6 +32,18 @@ def list_available_models() -> None:
         typer.echo(f"- {data['slug']:7} | {data['display_name']} | model={data['default_model']}")
 
 
+def _normalize_llm_provider(raw: Optional[str]) -> Optional[str]:
+    if raw is None:
+        return None
+    slug = raw.strip().lower()
+    if not slug:
+        return None
+    providers = list_llm_providers()
+    if slug not in providers:
+        raise typer.BadParameter(f"未登録のLLMプロバイダーです: {slug}. 候補: {providers}")
+    return slug
+
+
 @app.command()
 def run(
     audio: List[Path] = typer.Argument(None, help='入力音声ファイルへのパス（複数可）。--resume 指定時は省略可'),
@@ -40,11 +53,15 @@ def run(
     output_dir: Path = typer.Option(Path('temp/poc_samples'), help='結果を書き出すディレクトリ'),
     progress_dir: Path = typer.Option(Path('temp/progress'), help='進捗ファイルの出力ディレクトリ'),
     resume: Optional[Path] = typer.Option(None, help='再開する progress JSON のパス'),
+    llm: Optional[str] = typer.Option(None, '--llm', help='使用するLLMプロバイダー（例: openai, google, anthropic）'),
+    rewrite: Optional[bool] = typer.Option(None, '--rewrite/--no-rewrite', help='LLM整形で語尾リライトを有効化する'),
     simulate: bool = typer.Option(True, '--simulate/--no-simulate', help='シミュレーションモードを切り替える'),
     verbose: bool = typer.Option(False, '--verbose', help='詳細ログを有効化'),
 ) -> None:
     """PoC向けの文字起こしパイプラインを実行する。"""
     _configure_logging(verbose)
+
+    llm_provider = _normalize_llm_provider(llm)
 
     base_options = PocRunOptions(
         language=language,
@@ -53,6 +70,8 @@ def run(
         progress_dir=progress_dir,
         simulate=simulate,
         verbose=verbose,
+        llm_provider=llm_provider,
+        rewrite=rewrite,
     )
     if resume:
         try:

@@ -38,7 +38,13 @@ def create_progress(tmp_path: Path, *, status: str = "failed") -> Path:
         ],
         metadata={
             "requested_at": "20251120T173552",
-            "options": {"language": "ja", "chunk_size": 1024, "simulate": False},
+            "options": {
+                "language": "ja",
+                "chunk_size": 1024,
+                "simulate": False,
+                "llm_provider": "openai",
+                "rewrite": True,
+            },
         },
     )
     progress_path = tmp_path / "progress.json"
@@ -58,6 +64,8 @@ def test_prepare_resume_run_uses_metadata(tmp_path):
     assert resume_options.simulate is False
     assert resume_options.timestamp == "20251120T173552"
     assert resume_options.resume_source == progress_path
+    assert resume_options.llm_provider == "openai"
+    assert resume_options.rewrite is True
 
 
 def test_prepare_resume_run_rejects_completed(tmp_path):

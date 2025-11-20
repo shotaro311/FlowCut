@@ -17,6 +17,7 @@ class LLMSettings:
     google_api_base: str = "https://generativelanguage.googleapis.com/v1beta"
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-3-5-sonnet-20241022"
+    anthropic_api_base: str = "https://api.anthropic.com/v1"
     request_timeout: float = 30.0
 
 
@@ -44,6 +45,7 @@ def get_settings() -> AppSettings:
         google_api_base=_env("GOOGLE_API_BASE", "https://generativelanguage.googleapis.com/v1beta"),
         anthropic_api_key=_env("ANTHROPIC_API_KEY"),
         anthropic_model=_env("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022"),
+        anthropic_api_base=_env("ANTHROPIC_API_BASE", "https://api.anthropic.com/v1"),
         request_timeout=float(_env("LLM_REQUEST_TIMEOUT", "30.0")),
     )
     return AppSettings(llm=llm)
