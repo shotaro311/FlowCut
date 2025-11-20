@@ -6,6 +6,7 @@ import logging
 import re
 from typing import Any, Callable, Dict, List, Sequence, Tuple, Type
 import unicodedata
+import time
 
 from .prompts import PromptPayload, build_subtitle_prompt
 
@@ -135,7 +136,7 @@ class LLMFormatter:
             raise FormatterError("line_max_chars には正の値を指定してください")
         provider = get_provider(request.provider)
         prompt = self.prompt_builder(request)
-        raw_output = provider.format(prompt, request)
+        raw_output = self._run_with_retry(provider, prompt, request)
         lines, parse_issues = self._parse_output(raw_output)
         validation_issues = self._validate_lines(lines, request.line_max_chars)
         issues = [*parse_issues, *validation_issues]
@@ -199,6 +200,22 @@ class LLMFormatter:
                     )
                 )
         return issues
+
+    def _run_with_retry(self, provider: BaseLLMProvider, prompt: PromptPayload, request: FormatterRequest) -> str:
+        backoffs = [1, 3, 5]
+        attempts = request.max_retries if request.max_retries and request.max_retries > 0 else 1
+        last_error: Exception | None = None
+        for idx in range(attempts):
+            try:
+                return provider.format(prompt, request)
+            except FormatterError as exc:
+                last_error = exc
+                if idx == attempts - 1:
+                    break
+                sleep_for = backoffs[idx] if idx < len(backoffs) else backoffs[-1]
+                logger.warning("LLM呼び出しリトライ (%s/%s): %s", idx + 1, attempts, exc)
+                time.sleep(sleep_for)
+        raise last_error if last_error else FormatterError("LLM呼び出しに失敗しました")
 
 
 __all__ = [
