@@ -16,13 +16,17 @@ class KotobaRunner(BaseTranscribeRunner):
     default_model = 'kaiinui/kotoba-whisper-v2.0-mlx'
     requires_gpu = True
 
-    def prepare(self, config: TranscriptionConfig) -> None:  # pragma: no cover - import確認のみ
-        if config.simulate:
-            logger.debug('[kotoba] シミュレーションモードのためモデル読込をスキップ')
-            return
-        raise NotImplementedError('kotoba-mlx 実装は今後追加予定です')
-
     def transcribe(self, audio_path: Path, config: TranscriptionConfig) -> TranscriptionResult:
         if config.simulate:
             return self.simulate_transcription(audio_path, config)
-        raise NotImplementedError('kotoba-mlx 実装は今後追加予定です')
+        # 当面は OpenAI Whisper へのフォールバックで実行
+        from .openai_runner import transcribe_via_openai_whisper
+
+        logger.info("[kotoba] OpenAI Whisper へフォールバックして実行します")
+        return transcribe_via_openai_whisper(
+            audio_path,
+            config,
+            runner_slug=self.slug,
+            runner_model=self.default_model,
+            metadata_extra={"fallback": "openai_whisper"},
+        )

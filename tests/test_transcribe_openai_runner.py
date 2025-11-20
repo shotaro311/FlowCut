@@ -42,7 +42,7 @@ def test_openai_runner_parses_words(monkeypatch, tmp_path: Path):
     def fake_post(*args, **kwargs):
         # ensure correct endpoint and payload fields
         assert "audio/transcriptions" in args[0]
-        assert kwargs["data"]["model"]
+        assert kwargs["data"]["model"] == "whisper-test"
         return DummyResponse(payload)
 
     import src.transcribe.openai_runner as runner_mod

@@ -16,13 +16,16 @@ class MlxRunner(BaseTranscribeRunner):
     default_model = 'mlx-community/whisper-large-v3-mlx'
     requires_gpu = True
 
-    def prepare(self, config: TranscriptionConfig) -> None:  # pragma: no cover
-        if config.simulate:
-            logger.debug('[mlx] シミュレーションモードのため読み込みをスキップ')
-            return
-        raise NotImplementedError('mlx whisper 実装は今後追加予定です')
-
     def transcribe(self, audio_path: Path, config: TranscriptionConfig) -> TranscriptionResult:
         if config.simulate:
             return self.simulate_transcription(audio_path, config)
-        raise NotImplementedError('mlx whisper 実装は今後追加予定です')
+        from .openai_runner import transcribe_via_openai_whisper
+
+        logger.info("[mlx] OpenAI Whisper へフォールバックして実行します")
+        return transcribe_via_openai_whisper(
+            audio_path,
+            config,
+            runner_slug=self.slug,
+            runner_model=self.default_model,
+            metadata_extra={"fallback": "openai_whisper"},
+        )
