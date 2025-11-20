@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 import typer
 
@@ -44,6 +44,21 @@ def _normalize_llm_provider(raw: Optional[str]) -> Optional[str]:
     return slug
 
 
+def _parse_thresholds(raw: Optional[str]) -> Optional[List[int]]:
+    if raw is None:
+        return None
+    tokens = [t.strip() for t in raw.split(",") if t.strip()]
+    if not tokens:
+        return None
+    try:
+        values = [int(t) for t in tokens]
+    except ValueError as exc:
+        raise typer.BadParameter("align-thresholds はカンマ区切りの整数で指定してください (例: 90,85,80)") from exc
+    if any(v <= 0 or v > 100 for v in values):
+        raise typer.BadParameter("align-thresholds は1-100の範囲で指定してください")
+    return values
+
+
 @app.command()
 def run(
     audio: List[Path] = typer.Argument(None, help='入力音声ファイルへのパス（複数可）。--resume 指定時は省略可'),
@@ -57,6 +72,9 @@ def run(
     llm_temperature: Optional[float] = typer.Option(None, '--llm-temperature', help='LLM整形時のtemperature。未指定ならプロバイダー既定値'),
     llm_timeout: Optional[float] = typer.Option(None, '--llm-timeout', help='LLM APIリクエストのタイムアウト秒数'),
     rewrite: Optional[bool] = typer.Option(None, '--rewrite/--no-rewrite', help='LLM整形で語尾リライトを有効化する'),
+    align_thresholds: Optional[str] = typer.Option(None, '--align-thresholds', help='RapidFuzz閾値をカンマ区切りで指定 (例: 90,85,80)'),
+    align_gap: Optional[float] = typer.Option(None, '--align-gap', help='行間の最小ギャップ秒・デフォルト0.1'),
+    align_fallback: Optional[float] = typer.Option(None, '--align-fallback-padding', help='フォールバック時に前行終了へ足す秒数・デフォルト0.3'),
     simulate: bool = typer.Option(True, '--simulate/--no-simulate', help='シミュレーションモードを切り替える'),
     verbose: bool = typer.Option(False, '--verbose', help='詳細ログを有効化'),
 ) -> None:
@@ -64,6 +82,14 @@ def run(
     _configure_logging(verbose)
 
     llm_provider = _normalize_llm_provider(llm)
+    align_kwargs = {}
+    thresholds = _parse_thresholds(align_thresholds)
+    if thresholds:
+        align_kwargs["fuzzy_thresholds"] = thresholds
+    if align_gap is not None:
+        align_kwargs["gap_seconds"] = align_gap
+    if align_fallback is not None:
+        align_kwargs["fallback_padding"] = align_fallback
 
     base_options = PocRunOptions(
         language=language,
@@ -76,6 +102,7 @@ def run(
         rewrite=rewrite,
         llm_temperature=llm_temperature,
         llm_timeout=llm_timeout,
+        align_kwargs=align_kwargs,
     )
     if resume:
         try:
