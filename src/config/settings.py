@@ -18,6 +18,7 @@ class LLMSettings:
     default_provider: str = "openai"
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"
+    openai_whisper_model: str = "whisper-1"
     openai_base_url: str = "https://api.openai.com/v1"
     google_api_key: str | None = None
     google_model: str = "gemini-1.5-flash"
@@ -46,6 +47,7 @@ def get_settings() -> AppSettings:
         default_provider=_env("DEFAULT_LLM_PROVIDER", "openai"),
         openai_api_key=_env("OPENAI_API_KEY"),
         openai_model=_env("OPENAI_MODEL", "gpt-4o-mini"),
+        openai_whisper_model=_env("OPENAI_WHISPER_MODEL", "whisper-1"),
         openai_base_url=_env("OPENAI_BASE_URL", "https://api.openai.com/v1"),
         google_api_key=_env("GOOGLE_API_KEY"),
         google_model=_env("GOOGLE_MODEL", "gemini-1.5-flash"),

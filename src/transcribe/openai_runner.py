@@ -43,7 +43,7 @@ class OpenAIWhisperRunner(BaseTranscribeRunner):
             "file": (audio_path.name, audio_path.open("rb")),
         }
         data: Dict[str, Any] = {
-            "model": settings.openai_model,
+            "model": settings.openai_whisper_model,
             "response_format": "verbose_json",
             "timestamp_granularities[]": ["word"],
         }

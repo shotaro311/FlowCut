@@ -29,6 +29,7 @@ def test_openai_runner_parses_words(monkeypatch, tmp_path: Path):
     audio = tmp_path / "audio.m4a"
     audio.write_bytes(b"dummy")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("OPENAI_WHISPER_MODEL", "whisper-test")
     reload_settings()
     payload = {
         "text": "hello world",
