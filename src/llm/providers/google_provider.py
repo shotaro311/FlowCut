@@ -8,10 +8,11 @@ import requests
 
 from src.config import get_settings
 
-from ..formatter import BaseLLMProvider, FormatterError, FormatterRequest
+from ..formatter import BaseLLMProvider, FormatterError, FormatterRequest, register_provider
 from ..prompts import PromptPayload
 
 
+@register_provider
 class GoogleGeminiProvider(BaseLLMProvider):
     slug = "google"
     display_name = "Google Gemini"
