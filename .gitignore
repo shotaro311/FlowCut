@@ -1,0 +1,38 @@
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dylib
+*.egg-info/
+.build/
+build/
+dist/
+.python-version
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Environment files
+.env
+.env.local
+.env.*
+!.env.example
+
+# IDE / tooling
+.vscode/
+.idea/
+.DS_Store
+
+# Runtime outputs
+logs/*.log
+temp/**/*.json
+temp/**/*.tmp
+output/**/*.srt
