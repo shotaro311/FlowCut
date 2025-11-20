@@ -6,7 +6,7 @@ from datetime import datetime
 import json
 import logging
 from pathlib import Path
-from typing import Iterable, List, Sequence
+from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 from src.blocking.builders import sentences_from_words
 from src.blocking.splitter import Block, BlockSplitter
@@ -18,7 +18,9 @@ from src.transcribe import (
     get_runner,
 )
 from src.utils.progress import (
+    ProgressRecord,
     create_progress_record,
+    load_progress,
     mark_block_completed,
     mark_run_status,
     save_progress,
@@ -36,6 +38,7 @@ class PocRunOptions:
     simulate: bool = True
     verbose: bool = False
     timestamp: str | None = None
+    resume_source: Path | None = None
 
     def normalized_timestamp(self) -> str:
         return self.timestamp or datetime.now().strftime("%Y%m%dT%H%M%S")
@@ -106,7 +109,7 @@ def execute_poc_run(
                 runner_slug=slug,
                 blocks=block_payload,
                 progress_dir=options.progress_dir,
-                metadata={"requested_at": timestamp, **result.metadata},
+                metadata=_build_progress_metadata(options, result.metadata, timestamp),
             )
             saved_paths.append(output_path)
     return saved_paths
@@ -174,10 +177,71 @@ def save_progress_snapshot(
     logger.info("進捗ファイルを保存しました: %s", save_path)
 
 
+class ResumeCompletedError(RuntimeError):
+    """Raised when attempting to resume an already completed run."""
+
+
+def prepare_resume_run(
+    progress_path: Path,
+    *,
+    base_options: PocRunOptions,
+) -> Tuple[ProgressRecord, List[Path], List[str], PocRunOptions]:
+    record = load_progress(progress_path)
+    if record.status == "completed":
+        raise ResumeCompletedError(f"{progress_path} は既に完了済みです")
+    audio_files = ensure_audio_files([Path(record.audio_file)])
+    timestamp = _extract_timestamp(record)
+    option_meta = (record.metadata or {}).get("options", {})
+    resume_options = PocRunOptions(
+        language=base_options.language or option_meta.get("language"),
+        chunk_size=(
+            base_options.chunk_size
+            if base_options.chunk_size is not None
+            else option_meta.get("chunk_size")
+        ),
+        output_dir=base_options.output_dir,
+        progress_dir=base_options.progress_dir,
+        simulate=option_meta.get("simulate", base_options.simulate),
+        verbose=base_options.verbose,
+        timestamp=timestamp,
+        resume_source=progress_path,
+    )
+    return record, audio_files, [record.model], resume_options
+
+
+def _extract_timestamp(record: ProgressRecord) -> str | None:
+    meta_ts = (record.metadata or {}).get("requested_at")
+    if meta_ts:
+        return meta_ts
+    parts = record.run_id.rsplit("_", 1)
+    if len(parts) == 2:
+        return parts[1]
+    return None
+
+
+def _build_progress_metadata(
+    options: PocRunOptions,
+    base_metadata: Dict[str, Any],
+    timestamp: str,
+) -> Dict[str, Any]:
+    metadata: Dict[str, Any] = dict(base_metadata or {})
+    metadata.setdefault("requested_at", timestamp)
+    metadata["options"] = {
+        "language": options.language,
+        "chunk_size": options.chunk_size,
+        "simulate": options.simulate,
+    }
+    if options.resume_source:
+        metadata["resume_source"] = str(options.resume_source)
+    return metadata
+
+
 __all__ = [
     "PocRunOptions",
     "execute_poc_run",
     "resolve_models",
     "ensure_audio_files",
     "list_models",
+    "prepare_resume_run",
+    "ResumeCompletedError",
 ]

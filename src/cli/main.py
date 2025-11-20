@@ -9,12 +9,13 @@ import typer
 
 from src.pipeline import (
     PocRunOptions,
+    ResumeCompletedError,
     ensure_audio_files,
     execute_poc_run,
     list_models,
+    prepare_resume_run,
     resolve_models,
 )
-from src.utils.progress import load_progress
 
 app = typer.Typer(help="Flow Cut コマンドラインインターフェース")
 
@@ -45,11 +46,26 @@ def run(
     """PoC向けの文字起こしパイプラインを実行する。"""
     _configure_logging(verbose)
 
+    base_options = PocRunOptions(
+        language=language,
+        chunk_size=chunk_size,
+        output_dir=output_dir,
+        progress_dir=progress_dir,
+        simulate=simulate,
+        verbose=verbose,
+    )
     if resume:
-        record = load_progress(resume)
+        try:
+            record, audio_files, model_slugs, options = prepare_resume_run(
+                resume,
+                base_options=base_options,
+            )
+        except ResumeCompletedError as exc:
+            typer.echo(str(exc))
+            raise typer.Exit(code=0)
+        except FileNotFoundError as exc:
+            raise typer.BadParameter(str(exc)) from exc
         typer.echo(f"[resume] {resume} を読み込み audio={record.audio_file} model={record.model}")
-        audio_files = [Path(record.audio_file)]
-        model_slugs = [record.model]
     else:
         if not audio:
             raise typer.BadParameter('audio を指定するか --resume を利用してください')
@@ -58,15 +74,8 @@ def run(
             model_slugs = resolve_models(models)
         except ValueError as exc:
             raise typer.BadParameter(str(exc)) from exc
+        options = base_options
 
-    options = PocRunOptions(
-        language=language,
-        chunk_size=chunk_size,
-        output_dir=output_dir,
-        progress_dir=progress_dir,
-        simulate=simulate,
-        verbose=verbose,
-    )
     execute_poc_run(audio_files, model_slugs, options)
 
 

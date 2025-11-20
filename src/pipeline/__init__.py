@@ -1,10 +1,12 @@
 """Pipeline utilities for Flow Cut."""
 from .poc import (
     PocRunOptions,
-    execute_poc_run,
+    ResumeCompletedError,
     ensure_audio_files,
-    resolve_models,
+    execute_poc_run,
     list_models,
+    prepare_resume_run,
+    resolve_models,
 )
 
 __all__ = [
@@ -13,4 +15,6 @@ __all__ = [
     "ensure_audio_files",
     "resolve_models",
     "list_models",
+    "prepare_resume_run",
+    "ResumeCompletedError",
 ]
