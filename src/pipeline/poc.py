@@ -262,6 +262,17 @@ def prepare_resume_run(
             if base_options.rewrite is not None
             else option_meta.get("rewrite")
         ),
+        llm_temperature=(
+            base_options.llm_temperature
+            if base_options.llm_temperature is not None
+            else option_meta.get("llm_temperature")
+        ),
+        llm_timeout=(
+            base_options.llm_timeout if base_options.llm_timeout is not None else option_meta.get("llm_timeout")
+        ),
+        align_kwargs=(
+            base_options.align_kwargs if base_options.align_kwargs else option_meta.get("align_kwargs") or {}
+        ),
     )
     return record, audio_files, [record.model], resume_options
 
@@ -293,6 +304,7 @@ def _build_progress_metadata(
         "rewrite": options.rewrite,
         "llm_temperature": options.llm_temperature,
         "llm_timeout": options.llm_timeout,
+        "align_kwargs": options.align_kwargs,
     }
     if options.resume_source:
         metadata["resume_source"] = str(options.resume_source)
