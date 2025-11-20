@@ -36,3 +36,5 @@ logs/*.log
 temp/**/*.json
 temp/**/*.tmp
 output/**/*.srt
+samples/*.wav
+samples/*.m4a
