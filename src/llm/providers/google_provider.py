@@ -37,12 +37,13 @@ class GoogleGeminiProvider(BaseLLMProvider):
                 "temperature": 1 if request.temperature is None else request.temperature,
             },
         }
+        timeout = request.timeout if request.timeout is not None else settings.request_timeout
         try:
             response = requests.post(
                 endpoint,
                 params={"key": settings.google_api_key},
                 json=payload,
-                timeout=settings.request_timeout,
+                timeout=timeout,
             )
         except requests.RequestException as exc:
             raise FormatterError(f"Google Gemini API リクエストに失敗しました: {exc}") from exc

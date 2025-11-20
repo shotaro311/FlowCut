@@ -51,6 +51,7 @@ class PocRunOptions:
     llm_provider: str | None = None
     rewrite: bool | None = None
     llm_temperature: float | None = None
+    llm_timeout: float | None = None
     align_kwargs: Dict[str, Any] = field(default_factory=dict)
 
     def normalized_timestamp(self) -> str:
@@ -130,6 +131,7 @@ def execute_poc_run(
                     rewrite=options.rewrite or False,
                     run_id=run_id,
                     llm_temperature=options.llm_temperature,
+                    llm_timeout=options.llm_timeout,
                 )
                 if formatted_lines:
                     subtitle_path = options.subtitle_dir / f"{run_id}.srt"
@@ -290,6 +292,7 @@ def _build_progress_metadata(
         "llm_provider": options.llm_provider,
         "rewrite": options.rewrite,
         "llm_temperature": options.llm_temperature,
+        "llm_timeout": options.llm_timeout,
     }
     if options.resume_source:
         metadata["resume_source"] = str(options.resume_source)
@@ -306,6 +309,7 @@ def _format_blocks(
     rewrite: bool,
     run_id: str,
     llm_temperature: float | None,
+    llm_timeout: float | None,
 ) -> List[FormattedLine]:
     formatted: List[FormattedLine] = []
     for idx, block in enumerate(blocks, start=1):
@@ -314,6 +318,7 @@ def _format_blocks(
             provider=llm_provider,
             rewrite=rewrite,
             temperature=llm_temperature,
+            timeout=llm_timeout,
             metadata={"run_id": run_id, "block_index": idx},
         )
         try:

@@ -70,6 +70,7 @@ class AnthropicClaudeProvider(BaseLLMProvider):
             payload["temperature"] = request.temperature
 
         endpoint = settings.anthropic_api_base.rstrip("/") + "/messages"
+        timeout = request.timeout if request.timeout is not None else settings.request_timeout
         try:
             response = requests.post(
                 endpoint,
@@ -79,7 +80,7 @@ class AnthropicClaudeProvider(BaseLLMProvider):
                     "content-type": "application/json",
                 },
                 json=payload,
-                timeout=settings.request_timeout,
+                timeout=timeout,
             )
         except requests.RequestException as exc:
             raise FormatterError(f"Anthropic API リクエストに失敗しました: {exc}") from exc

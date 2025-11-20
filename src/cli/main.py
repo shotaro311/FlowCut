@@ -55,6 +55,7 @@ def run(
     resume: Optional[Path] = typer.Option(None, help='再開する progress JSON のパス'),
     llm: Optional[str] = typer.Option(None, '--llm', help='使用するLLMプロバイダー（例: openai, google, anthropic）'),
     llm_temperature: Optional[float] = typer.Option(None, '--llm-temperature', help='LLM整形時のtemperature。未指定ならプロバイダー既定値'),
+    llm_timeout: Optional[float] = typer.Option(None, '--llm-timeout', help='LLM APIリクエストのタイムアウト秒数'),
     rewrite: Optional[bool] = typer.Option(None, '--rewrite/--no-rewrite', help='LLM整形で語尾リライトを有効化する'),
     simulate: bool = typer.Option(True, '--simulate/--no-simulate', help='シミュレーションモードを切り替える'),
     verbose: bool = typer.Option(False, '--verbose', help='詳細ログを有効化'),
@@ -74,6 +75,7 @@ def run(
         llm_provider=llm_provider,
         rewrite=rewrite,
         llm_temperature=llm_temperature,
+        llm_timeout=llm_timeout,
     )
     if resume:
         try:
