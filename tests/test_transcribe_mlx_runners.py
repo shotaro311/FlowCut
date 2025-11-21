@@ -20,7 +20,7 @@ def _patch_mlx(monkeypatch):
 
     fake_mod = types.SimpleNamespace()
 
-    def fake_transcribe(path, path_or_hf_repo, word_timestamps, language):
+    def fake_transcribe(path, path_or_hf_repo, word_timestamps, language, **kwargs):
         return {
             "text": "dummy text",
             "segments": [

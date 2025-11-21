@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 from src.blocking.builders import sentences_from_words
-from src.blocking.splitter import Block, BlockSplitter
+from src.blocking.splitter import Block, BlockSplitter, Sentence
 from src.alignment import align_to_srt
 from src.llm.formatter import (
     FormatterError,
@@ -53,6 +53,7 @@ class PocRunOptions:
     llm_temperature: float | None = None
     llm_timeout: float | None = None
     align_kwargs: Dict[str, Any] = field(default_factory=dict)
+    use_block_splitter: bool = True
 
     def normalized_timestamp(self) -> str:
         return self.timestamp or datetime.now().strftime("%Y%m%dT%H%M%S")
@@ -98,7 +99,7 @@ def execute_poc_run(
         raise ValueError("models は1件以上指定してください")
 
     timestamp = options.normalized_timestamp()
-    splitter = BlockSplitter()
+    splitter = BlockSplitter() if options.use_block_splitter else None
     saved_paths: List[Path] = []
     # LLM整形は本番API応答のゆらぎを許容するため、デフォルトは strict=False にして例外で止まらないようにする。
     formatter = formatter or LLMFormatter(strict_validation=False)
@@ -116,7 +117,10 @@ def execute_poc_run(
         for audio_path in audio_files:
             result = runner.transcribe(audio_path, config)
             sentences = sentences_from_words(result.words, fallback_text=result.text)
-            blocks = splitter.split(sentences)
+            if options.use_block_splitter and splitter:
+                blocks = splitter.split(sentences)
+            else:
+                blocks = [Block(sentences=sentences or [Sentence(text=result.text)])]
             block_payload = build_block_payload(blocks)
             run_id = f"{audio_path.stem}_{slug}_{timestamp}"
             output_path = options.output_dir / f"{run_id}.json"

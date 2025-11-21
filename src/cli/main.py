@@ -77,6 +77,7 @@ def run(
     align_fallback: Optional[float] = typer.Option(None, '--align-fallback-padding', help='フォールバック時に前行終了へ足す秒数・デフォルト0.3'),
     simulate: bool = typer.Option(True, '--simulate/--no-simulate', help='シミュレーションモードを切り替える'),
     verbose: bool = typer.Option(False, '--verbose', help='詳細ログを有効化'),
+    block_splitter: bool = typer.Option(True, '--block-splitter/--no-block-splitter', help='BlockSplitter でブロック分割を行うか'),
 ) -> None:
     """PoC向けの文字起こしパイプラインを実行する。"""
     _configure_logging(verbose)
@@ -103,6 +104,7 @@ def run(
         llm_temperature=llm_temperature,
         llm_timeout=llm_timeout,
         align_kwargs=align_kwargs,
+        use_block_splitter=block_splitter,
     )
     if resume:
         try:

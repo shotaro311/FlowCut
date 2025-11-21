@@ -57,6 +57,10 @@ def run_mlx_whisper(
             path_or_hf_repo=model_id,
             word_timestamps=True,
             language=language,
+            # ローカル実行を安定・高速化するための設定
+            verbose=False,
+            temperature=0.0,  # 単一温度でデコードを固定（リトライでの多段温度を避ける）
+            condition_on_previous_text=False,  # ループ防止・速度優先
         )
     except Exception as exc:  # pragma: no cover - upstream error surface
         raise TranscriptionError(f"mlx-whisper 実行に失敗しました: {exc}") from exc

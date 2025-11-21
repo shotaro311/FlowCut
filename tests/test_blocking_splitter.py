@@ -36,3 +36,13 @@ def test_splitter_skips_empty_text():
     blocks = splitter.split(sentences)
     assert len(blocks) == 1
     assert blocks[0].text == "foobar"
+
+
+def test_splitter_splits_extreme_long_sentence_without_punct():
+    long_text = "あ" * 25  # width=25
+    sentences = [Sentence(text=long_text, start=None, end=None)]
+    splitter = BlockSplitter(max_chars=10, max_duration=None, overlap_sentences=0)
+    blocks = splitter.split(sentences)
+    # 25幅を10刻みで3ブロックになるはず
+    assert len(blocks) == 3
+    assert all(len(b.text) > 0 for b in blocks)

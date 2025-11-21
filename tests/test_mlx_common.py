@@ -17,7 +17,7 @@ def test_run_mlx_whisper_parses_words(monkeypatch, tmp_path: Path):
 
     fake_mod = pytest.importorskip("types").SimpleNamespace()
 
-    def fake_transcribe(path_or_file, path_or_hf_repo, word_timestamps, language):
+    def fake_transcribe(path_or_file, path_or_hf_repo, word_timestamps, language, **kwargs):
         assert path_or_hf_repo == "test-model"
         return {
             "text": "hello world",

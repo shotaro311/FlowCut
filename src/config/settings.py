@@ -15,7 +15,7 @@ except Exception:
 
 @dataclass(slots=True)
 class LLMSettings:
-    default_provider: str = "openai"
+    default_provider: str = "google"
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"
     openai_whisper_model: str = "whisper-1"
