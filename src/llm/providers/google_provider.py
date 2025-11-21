@@ -33,15 +33,20 @@ class GoogleGeminiProvider(BaseLLMProvider):
                 }
             ],
             "generationConfig": {
-                "temperature": request.temperature if request.temperature is not None else 0.2,
+                # Geminiはデフォルト1を推奨。None時は1を設定。
+                "temperature": 1 if request.temperature is None else request.temperature,
             },
         }
-        response = requests.post(
-            endpoint,
-            params={"key": settings.google_api_key},
-            json=payload,
-            timeout=settings.request_timeout,
-        )
+        timeout = request.timeout if request.timeout is not None else settings.request_timeout
+        try:
+            response = requests.post(
+                endpoint,
+                params={"key": settings.google_api_key},
+                json=payload,
+                timeout=timeout,
+            )
+        except requests.RequestException as exc:
+            raise FormatterError(f"Google Gemini API リクエストに失敗しました: {exc}") from exc
         if response.status_code >= 400:
             raise FormatterError(f"Google Gemini API エラー: {response.status_code} {response.text}")
         data: Dict[str, Any] = response.json()

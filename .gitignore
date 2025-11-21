@@ -33,6 +33,7 @@ ENV/
 
 # Runtime outputs
 logs/*.log
+logs/*.json
 temp/**/*.json
 temp/**/*.tmp
 output/**/*.srt

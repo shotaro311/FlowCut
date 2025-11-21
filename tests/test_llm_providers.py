@@ -12,6 +12,7 @@ from src.config import reload_settings
 from src.llm.prompts import build_subtitle_prompt
 from src.llm.providers.openai_provider import OpenAIChatProvider
 from src.llm.providers.google_provider import GoogleGeminiProvider
+from src.llm.providers.anthropic_provider import AnthropicClaudeProvider
 from src.llm.formatter import FormatterRequest, FormatterError
 
 
@@ -91,5 +92,40 @@ def test_google_provider_requires_api_key(monkeypatch):
     provider = GoogleGeminiProvider()
     prompt = build_subtitle_prompt("設定")
     request = FormatterRequest(block_text="設定", provider="google")
+    with pytest.raises(FormatterError):
+        provider.format(prompt, request)
+
+
+def test_anthropic_provider_parses_response(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "ak-test")
+    monkeypatch.setenv("ANTHROPIC_MODEL", "claude-test")
+    monkeypatch.setenv("ANTHROPIC_API_BASE", "https://api.fake/v1")
+    reload_settings()
+
+    payload = {
+        "content": [
+            {"type": "text", "text": "設定を開いて[WORD: 開いて]\nください"},
+        ]
+    }
+
+    def fake_post(*args, **kwargs):
+        return DummyResponse(payload)
+
+    import src.llm.providers.anthropic_provider as anthropic_provider
+
+    monkeypatch.setattr(anthropic_provider.requests, "post", fake_post)
+    provider = AnthropicClaudeProvider()
+    prompt = build_subtitle_prompt("設定を開いてください")
+    request = FormatterRequest(block_text="設定", provider="anthropic")
+    text = provider.format(prompt, request)
+    assert "設定を開いて" in text
+
+
+def test_anthropic_provider_requires_api_key(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    reload_settings()
+    provider = AnthropicClaudeProvider()
+    prompt = build_subtitle_prompt("設定")
+    request = FormatterRequest(block_text="設定", provider="anthropic")
     with pytest.raises(FormatterError):
         provider.format(prompt, request)

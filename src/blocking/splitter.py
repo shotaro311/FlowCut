@@ -31,6 +31,28 @@ def _find_end(sentences: Sequence["Sentence"]) -> float | None:
     return None
 
 
+def _split_long_sentence(sentence: "Sentence", *, max_width: float) -> List["Sentence"]:
+    """句読点がなく極端に長い文を安全弁で分割する。
+
+    - 全角=1, 半角=0.5 で幅計算し、max_width を超えたら切る
+    - 時刻情報は保持できないので start/end は None にする
+    """
+    pieces: List[str] = []
+    buf: List[str] = []
+    width = 0.0
+    for ch in sentence.text:
+        ch_width = 1.0 if unicodedata.east_asian_width(ch) in {"W", "F"} else 0.5
+        if buf and width + ch_width > max_width:
+            pieces.append("".join(buf))
+            buf = []
+            width = 0.0
+        buf.append(ch)
+        width += ch_width
+    if buf:
+        pieces.append("".join(buf))
+    return [Sentence(text=p) for p in pieces if p.strip()]
+
+
 @dataclass
 class Sentence:
     text: str
@@ -73,14 +95,14 @@ class BlockSplitter:
     def __init__(
         self,
         *,
-        max_chars: int = 1200,
-        max_duration: float = 30.0,
+        max_chars: int = 2000,
+        max_duration: float | None = None,
         overlap_sentences: int = 2,
     ) -> None:
         if max_chars <= 0:
             raise ValueError("max_chars must be positive")
-        if max_duration <= 0:
-            raise ValueError("max_duration must be positive")
+        if max_duration is not None and max_duration <= 0:
+            raise ValueError("max_duration must be positive when specified")
         if overlap_sentences < 0:
             raise ValueError("overlap_sentences must be >= 0")
         self.max_chars = max_chars
@@ -132,6 +154,45 @@ class BlockSplitter:
             if not original.text.strip():
                 continue
             sentence = original.clone()
+            # 安全弁：1文が max_chars を超える場合は句読点を待たず分割
+            sentence_width = _display_width(sentence.text)
+            if sentence_width > self.max_chars:
+                long_parts = _split_long_sentence(sentence, max_width=self.max_chars)
+                for part in long_parts:
+                    # 再帰的に処理するため、前段のロジックを流用
+                    sentences_to_process = [part]
+                    for part_sentence in sentences_to_process:
+                        width = _display_width(part_sentence.text)
+                        while True:
+                            candidate_start = block_start if block_start is not None else part_sentence.start
+                            candidate_end = part_sentence.end if part_sentence.end is not None else block_end
+                            duration = None
+                            if candidate_start is not None and candidate_end is not None:
+                                duration = max(candidate_end - candidate_start, 0.0)
+                            exceeds_chars = current_chars + width > self.max_chars
+                            exceeds_duration = (
+                                self.max_duration is not None
+                                and duration is not None
+                                and duration > self.max_duration
+                            )
+                            if (exceeds_chars or exceeds_duration) and current:
+                                finalize_block()
+                                seed_overlap()
+                                continue
+                            break
+
+                        if not current:
+                            seed_overlap()
+                            if block_start is None:
+                                block_start = part_sentence.start
+
+                        current.append(part_sentence)
+                        current_chars += width
+                        if part_sentence.end is not None:
+                            block_end = part_sentence.end
+                        elif block_end is None:
+                            block_end = part_sentence.start
+                continue
             width = _display_width(sentence.text)
 
             while True:
@@ -141,7 +202,9 @@ class BlockSplitter:
                 if candidate_start is not None and candidate_end is not None:
                     duration = max(candidate_end - candidate_start, 0.0)
                 exceeds_chars = current_chars + width > self.max_chars
-                exceeds_duration = duration is not None and duration > self.max_duration
+                exceeds_duration = (
+                    self.max_duration is not None and duration is not None and duration > self.max_duration
+                )
                 if (exceeds_chars or exceeds_duration) and current:
                     finalize_block()
                     seed_overlap()

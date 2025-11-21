@@ -26,17 +26,22 @@ class OpenAIChatProvider(BaseLLMProvider):
         payload = {
             "model": model,
             "messages": prompt.as_messages(),
-            "temperature": request.temperature if request.temperature is not None else 0.2,
+            # gpt-4o-mini 系は temperature=1 が必須。指定が無い場合は1に固定する。
+            "temperature": 1 if request.temperature is None else request.temperature,
         }
-        response = requests.post(
-            settings.openai_base_url.rstrip("/") + "/chat/completions",
-            headers={
-                "Authorization": f"Bearer {settings.openai_api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=settings.request_timeout,
-        )
+        timeout = request.timeout if request.timeout is not None else settings.request_timeout
+        try:
+            response = requests.post(
+                settings.openai_base_url.rstrip("/") + "/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.openai_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=timeout,
+            )
+        except requests.RequestException as exc:
+            raise FormatterError(f"OpenAI API リクエストに失敗しました: {exc}") from exc
         if response.status_code >= 400:
             raise FormatterError(f"OpenAI API エラー: {response.status_code} {response.text}")
         data: Dict[str, Any] = response.json()
