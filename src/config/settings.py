@@ -44,7 +44,7 @@ def _env(key: str, default: str | None = None) -> str | None:
 @lru_cache(maxsize=1)
 def get_settings() -> AppSettings:
     llm = LLMSettings(
-        default_provider=_env("DEFAULT_LLM_PROVIDER", "openai"),
+        default_provider=_env("DEFAULT_LLM_PROVIDER", "google"),
         openai_api_key=_env("OPENAI_API_KEY"),
         openai_model=_env("OPENAI_MODEL", "gpt-4o-mini"),
         openai_whisper_model=_env("OPENAI_WHISPER_MODEL", "whisper-1"),

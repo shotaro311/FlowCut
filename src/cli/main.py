@@ -82,6 +82,8 @@ def run(
     _configure_logging(verbose)
 
     llm_provider = _normalize_llm_provider(llm)
+    if llm_provider is None:
+        typer.echo("[info] --llm 未指定のため整形とSRT出力をスキップし、文字起こしJSONのみ保存します", err=True)
     align_kwargs = {}
     thresholds = _parse_thresholds(align_thresholds)
     if thresholds:
