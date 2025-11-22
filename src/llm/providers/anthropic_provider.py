@@ -10,6 +10,7 @@ from src.config import get_settings
 
 from ..formatter import BaseLLMProvider, FormatterError, FormatterRequest, register_provider
 from ..prompts import PromptPayload
+from ..api_client import post_json_request
 
 _ANTHROPIC_VERSION = "2023-06-01"
 
@@ -71,23 +72,21 @@ class AnthropicClaudeProvider(BaseLLMProvider):
 
         endpoint = settings.anthropic_api_base.rstrip("/") + "/messages"
         timeout = request.timeout if request.timeout is not None else settings.request_timeout
-        try:
-            response = requests.post(
-                endpoint,
-                headers={
-                    "x-api-key": settings.anthropic_api_key,
-                    "anthropic-version": _ANTHROPIC_VERSION,
-                    "content-type": "application/json",
-                },
-                json=payload,
-                timeout=timeout,
-            )
-        except requests.RequestException as exc:
-            raise FormatterError(f"Anthropic API リクエストに失敗しました: {exc}") from exc
-        if response.status_code >= 400:
-            raise FormatterError(f"Anthropic API エラー: {response.status_code} {response.text}")
+        
+        headers = {
+            "x-api-key": settings.anthropic_api_key,
+            "anthropic-version": _ANTHROPIC_VERSION,
+            "content-type": "application/json",
+        }
 
-        data: Dict[str, Any] = response.json()
+        data = post_json_request(
+            url=endpoint,
+            payload=payload,
+            headers=headers,
+            timeout=timeout,
+            error_prefix="Anthropic API",
+        )
+
         texts = _extract_text_blocks(data.get("content"))
         if texts:
             return "\n".join(texts)

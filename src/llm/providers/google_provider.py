@@ -10,6 +10,7 @@ from src.config import get_settings
 
 from ..formatter import BaseLLMProvider, FormatterError, FormatterRequest, register_provider
 from ..prompts import PromptPayload
+from ..api_client import post_json_request
 
 
 @register_provider
@@ -38,18 +39,14 @@ class GoogleGeminiProvider(BaseLLMProvider):
             },
         }
         timeout = request.timeout if request.timeout is not None else settings.request_timeout
-        try:
-            response = requests.post(
-                endpoint,
-                params={"key": settings.google_api_key},
-                json=payload,
-                timeout=timeout,
-            )
-        except requests.RequestException as exc:
-            raise FormatterError(f"Google Gemini API リクエストに失敗しました: {exc}") from exc
-        if response.status_code >= 400:
-            raise FormatterError(f"Google Gemini API エラー: {response.status_code} {response.text}")
-        data: Dict[str, Any] = response.json()
+        
+        data = post_json_request(
+            url=endpoint,
+            payload=payload,
+            params={"key": settings.google_api_key},
+            timeout=timeout,
+            error_prefix="Google Gemini API",
+        )
         try:
             candidates = data["candidates"]
             content = candidates[0]["content"]["parts"][0]["text"].strip()

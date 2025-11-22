@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
-from .base import TranscriptionConfig, TranscriptionError, TranscriptionResult, WordTimestamp
+from .base import BaseTranscribeRunner, TranscriptionConfig, TranscriptionError, TranscriptionResult, WordTimestamp
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +80,22 @@ def run_mlx_whisper(
         "simulate": False,
     }
     return TranscriptionResult(text=text, words=words, metadata=metadata)
+
+
+class BaseMlxRunner(BaseTranscribeRunner):
+    """MLX Whisper ランナーの基底クラス。"""
+    
+    requires_gpu = True
+
+    def transcribe(self, audio_path: Path, config: TranscriptionConfig) -> TranscriptionResult:
+        if config.simulate:
+            return self.simulate_transcription(audio_path, config)
+        
+        result = run_mlx_whisper(audio_path, model_id=self.default_model, language=config.language)
+        
+        # メタデータのrunnerを自身のslugで上書き
+        result.metadata["runner"] = self.slug
+        return result
 
 
 __all__ = ["run_mlx_whisper"]
