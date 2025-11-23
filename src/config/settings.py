@@ -21,12 +21,16 @@ class LLMSettings:
     openai_whisper_model: str = "whisper-1"
     openai_base_url: str = "https://api.openai.com/v1"
     google_api_key: str | None = None
-    google_model: str = "gemini-1.5-flash"
+    google_model: str = "gemini-3-pro-preview"
     google_api_base: str = "https://generativelanguage.googleapis.com/v1beta"
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-3-5-sonnet-20241022"
     anthropic_api_base: str = "https://api.anthropic.com/v1"
-    request_timeout: float = 30.0
+    request_timeout: float = 200.0
+    # Per-pass model overrides (providerに依存しない自由入力)
+    pass1_model: str = "gemini-3-pro-preview"
+    pass2_model: str = "gemini-3-pro-preview"
+    pass3_model: str = "gemini-2.5-flash"
 
 
 @dataclass(slots=True)
@@ -44,18 +48,21 @@ def _env(key: str, default: str | None = None) -> str | None:
 @lru_cache(maxsize=1)
 def get_settings() -> AppSettings:
     llm = LLMSettings(
-        default_provider=_env("DEFAULT_LLM_PROVIDER", "openai"),
+        default_provider=_env("DEFAULT_LLM_PROVIDER", "google"),
         openai_api_key=_env("OPENAI_API_KEY"),
         openai_model=_env("OPENAI_MODEL", "gpt-4o-mini"),
         openai_whisper_model=_env("OPENAI_WHISPER_MODEL", "whisper-1"),
         openai_base_url=_env("OPENAI_BASE_URL", "https://api.openai.com/v1"),
         google_api_key=_env("GOOGLE_API_KEY"),
-        google_model=_env("GOOGLE_MODEL", "gemini-1.5-flash"),
+        google_model=_env("GOOGLE_MODEL", "gemini-3-pro-preview"),
         google_api_base=_env("GOOGLE_API_BASE", "https://generativelanguage.googleapis.com/v1beta"),
         anthropic_api_key=_env("ANTHROPIC_API_KEY"),
         anthropic_model=_env("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022"),
         anthropic_api_base=_env("ANTHROPIC_API_BASE", "https://api.anthropic.com/v1"),
-        request_timeout=float(_env("LLM_REQUEST_TIMEOUT", "30.0")),
+        request_timeout=float(_env("LLM_REQUEST_TIMEOUT", "200.0")),
+        pass1_model=_env("LLM_PASS1_MODEL", "gemini-3-pro-preview"),
+        pass2_model=_env("LLM_PASS2_MODEL", "gemini-3-pro-preview"),
+        pass3_model=_env("LLM_PASS3_MODEL", "gemini-2.5-flash"),
     )
     return AppSettings(llm=llm)
 

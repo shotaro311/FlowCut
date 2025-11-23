@@ -10,6 +10,7 @@ from src.config import get_settings
 
 from ..formatter import BaseLLMProvider, FormatterError, FormatterRequest, register_provider
 from ..prompts import PromptPayload
+from ..api_client import post_json_request
 
 
 @register_provider
@@ -30,21 +31,19 @@ class OpenAIChatProvider(BaseLLMProvider):
             "temperature": 1 if request.temperature is None else request.temperature,
         }
         timeout = request.timeout if request.timeout is not None else settings.request_timeout
-        try:
-            response = requests.post(
-                settings.openai_base_url.rstrip("/") + "/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {settings.openai_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-                timeout=timeout,
-            )
-        except requests.RequestException as exc:
-            raise FormatterError(f"OpenAI API リクエストに失敗しました: {exc}") from exc
-        if response.status_code >= 400:
-            raise FormatterError(f"OpenAI API エラー: {response.status_code} {response.text}")
-        data: Dict[str, Any] = response.json()
+        
+        headers = {
+            "Authorization": f"Bearer {settings.openai_api_key}",
+            "Content-Type": "application/json",
+        }
+
+        data = post_json_request(
+            url=settings.openai_base_url.rstrip("/") + "/chat/completions",
+            payload=payload,
+            headers=headers,
+            timeout=timeout,
+            error_prefix="OpenAI API",
+        )
         try:
             content = data["choices"][0]["message"]["content"].strip()
         except (KeyError, IndexError) as exc:  # pragma: no cover - defensive

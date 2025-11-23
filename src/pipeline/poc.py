@@ -8,9 +8,8 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
-from src.blocking.builders import sentences_from_words
-from src.blocking.splitter import Block, BlockSplitter, Sentence
 from src.alignment import align_to_srt
+from src.llm.two_pass import TwoPassFormatter, TwoPassResult
 from src.llm.formatter import (
     FormatterError,
     FormatterRequest,
@@ -53,7 +52,7 @@ class PocRunOptions:
     llm_temperature: float | None = None
     llm_timeout: float | None = None
     align_kwargs: Dict[str, Any] = field(default_factory=dict)
-    use_block_splitter: bool = True
+    llm_two_pass: bool = False
 
     def normalized_timestamp(self) -> str:
         return self.timestamp or datetime.now().strftime("%Y%m%dT%H%M%S")
@@ -62,7 +61,9 @@ class PocRunOptions:
 def resolve_models(raw: str | None) -> List[str]:
     """Return sorted list of runner slugs (all if raw is None)."""
     if not raw:
-        return available_runners()
+        # デフォルトはクラウドWhisperを避け、ローカルMLX large-v3のみを使用
+        runners = available_runners()
+        return [slug for slug in runners if slug == "mlx"] or runners
     requested = [token.strip() for token in raw.split(",") if token.strip()]
     unknown = [slug for slug in requested if slug not in available_runners()]
     if unknown:
@@ -99,7 +100,6 @@ def execute_poc_run(
         raise ValueError("models は1件以上指定してください")
 
     timestamp = options.normalized_timestamp()
-    splitter = BlockSplitter() if options.use_block_splitter else None
     saved_paths: List[Path] = []
     # LLM整形は本番API応答のゆらぎを許容するため、デフォルトは strict=False にして例外で止まらないようにする。
     formatter = formatter or LLMFormatter(strict_validation=False)
@@ -116,45 +116,76 @@ def execute_poc_run(
         runner.prepare(config)
         for audio_path in audio_files:
             result = runner.transcribe(audio_path, config)
-            sentences = sentences_from_words(result.words, fallback_text=result.text)
-            if options.use_block_splitter and splitter:
-                blocks = splitter.split(sentences)
-            else:
-                blocks = [Block(sentences=sentences or [Sentence(text=result.text)])]
-            block_payload = build_block_payload(blocks)
+            blocks = build_single_block(result)
             run_id = f"{audio_path.stem}_{slug}_{timestamp}"
             output_path = options.output_dir / f"{run_id}.json"
-            save_result(result, output_path, blocks=block_payload)
+            save_result(result, output_path, blocks=blocks)
 
             subtitle_path: Path | None = None
             if options.llm_provider:
-                formatted_lines = _format_blocks(
-                    blocks=blocks,
-                    formatter=formatter,
-                    llm_provider=options.llm_provider,
-                    rewrite=options.rewrite or False,
-                    run_id=run_id,
-                    llm_temperature=options.llm_temperature,
-                    llm_timeout=options.llm_timeout,
-                )
-                if formatted_lines:
-                    subtitle_path = options.subtitle_dir / f"{run_id}.srt"
-                    subtitle_text = align_to_srt(
-                        formatted_lines,
-                        result.words,
-                        **(options.align_kwargs or {}),
+                subtitle_path = options.subtitle_dir / f"{run_id}.srt"
+                subtitle_text: str | None = None
+                if options.llm_two_pass:
+                    two_pass = TwoPassFormatter(
+                        llm_provider=options.llm_provider,
+                        temperature=options.llm_temperature,
+                        timeout=options.llm_timeout,
                     )
+                    try:
+                        tp_result: TwoPassResult | None = two_pass.run(
+                            text=result.text,
+                            words=result.words or [],
+                            max_chars=17.0,
+                        )
+                        if tp_result:
+                            subtitle_text = tp_result.srt_text
+                    except FormatterError as exc:
+                        logger.warning("二段階LLM整形に失敗しました: %s", exc)
+                        # フォールバックとして従来の1パス整形を試みる
+                        formatted_lines = _format_blocks(
+                            blocks=blocks,
+                            formatter=formatter,
+                            llm_provider=options.llm_provider,
+                            rewrite=options.rewrite or False,
+                            run_id=run_id,
+                            llm_temperature=options.llm_temperature,
+                            llm_timeout=options.llm_timeout,
+                        )
+                        if formatted_lines:
+                            subtitle_text = align_to_srt(
+                                formatted_lines,
+                                result.words,
+                                **(options.align_kwargs or {}),
+                            )
+                else:
+                    formatted_lines = _format_blocks(
+                        blocks=blocks,
+                        formatter=formatter,
+                        llm_provider=options.llm_provider,
+                        rewrite=options.rewrite or False,
+                        run_id=run_id,
+                        llm_temperature=options.llm_temperature,
+                        llm_timeout=options.llm_timeout,
+                    )
+                    if formatted_lines:
+                        subtitle_text = align_to_srt(
+                            formatted_lines,
+                            result.words,
+                            **(options.align_kwargs or {}),
+                        )
+                    else:
+                        logger.warning("LLM整形結果が空のためSRTを生成しませんでした: %s", run_id)
+
+                if subtitle_text:
                     subtitle_path.parent.mkdir(parents=True, exist_ok=True)
                     subtitle_path.write_text(subtitle_text, encoding="utf-8")
                     logger.info("SRTを保存しました: %s", subtitle_path)
-                else:
-                    logger.warning("LLM整形結果が空のためSRTを生成しませんでした: %s", run_id)
 
             save_progress_snapshot(
                 run_id=run_id,
                 audio_path=audio_path,
                 runner_slug=slug,
-                blocks=block_payload,
+                blocks=blocks,
                 progress_dir=options.progress_dir,
                 metadata=_build_progress_metadata(
                     options,
@@ -170,28 +201,21 @@ def execute_poc_run(
 
 # --- helper functions shared by script/CLI ---
 
-def build_block_payload(blocks: List[Block]) -> List[dict]:
-    payload: List[dict] = []
-    for idx, block in enumerate(blocks, start=1):
-        payload.append(
-            {
-                "index": idx,
-                "text": block.text,
-                "start": block.start,
-                "end": block.end,
-                "duration": block.duration,
-                "sentences": [
-                    {
-                        "text": sentence.text,
-                        "start": sentence.start,
-                        "end": sentence.end,
-                        "overlap": sentence.overlap,
-                    }
-                    for sentence in block.sentences
-                ],
-            }
-        )
-    return payload
+def build_single_block(result: TranscriptionResult) -> List[dict]:
+    words = result.words or []
+    start = words[0].start if words else 0.0
+    end = words[-1].end if words else 0.0
+    duration = max(0.0, end - start)
+    return [
+        {
+            "index": 1,
+            "text": result.text,
+            "start": start,
+            "end": end,
+            "duration": duration,
+            "sentences": [],
+        }
+    ]
 
 
 def save_result(result: TranscriptionResult, dest: Path, *, blocks: List[dict] | None = None) -> None:
@@ -266,6 +290,7 @@ def prepare_resume_run(
             if base_options.rewrite is not None
             else option_meta.get("rewrite")
         ),
+        llm_two_pass=option_meta.get("llm_two_pass", base_options.llm_two_pass),
         llm_temperature=(
             base_options.llm_temperature
             if base_options.llm_temperature is not None
@@ -309,6 +334,7 @@ def _build_progress_metadata(
         "llm_temperature": options.llm_temperature,
         "llm_timeout": options.llm_timeout,
         "align_kwargs": options.align_kwargs,
+        "llm_two_pass": options.llm_two_pass,
     }
     if options.resume_source:
         metadata["resume_source"] = str(options.resume_source)
@@ -319,7 +345,7 @@ def _build_progress_metadata(
 
 def _format_blocks(
     *,
-    blocks: Sequence[Block],
+    blocks: Sequence[dict],
     formatter: LLMFormatter,
     llm_provider: str,
     rewrite: bool,
@@ -330,7 +356,7 @@ def _format_blocks(
     formatted: List[FormattedLine] = []
     for idx, block in enumerate(blocks, start=1):
         request = FormatterRequest(
-            block_text=block.text,
+            block_text=str(block.get("text", "")),
             provider=llm_provider,
             rewrite=rewrite,
             temperature=llm_temperature,

@@ -75,14 +75,16 @@ def run(
     align_thresholds: Optional[str] = typer.Option(None, '--align-thresholds', help='RapidFuzz閾値をカンマ区切りで指定 (例: 90,85,80)'),
     align_gap: Optional[float] = typer.Option(None, '--align-gap', help='行間の最小ギャップ秒・デフォルト0.1'),
     align_fallback: Optional[float] = typer.Option(None, '--align-fallback-padding', help='フォールバック時に前行終了へ足す秒数・デフォルト0.3'),
+    llm_two_pass: bool = typer.Option(False, '--llm-two-pass', help='LLM二段階モード（パス1: 置換/削除、パス2: 17文字分割）を使用する'),
     simulate: bool = typer.Option(True, '--simulate/--no-simulate', help='シミュレーションモードを切り替える'),
     verbose: bool = typer.Option(False, '--verbose', help='詳細ログを有効化'),
-    block_splitter: bool = typer.Option(True, '--block-splitter/--no-block-splitter', help='BlockSplitter でブロック分割を行うか'),
 ) -> None:
     """PoC向けの文字起こしパイプラインを実行する。"""
     _configure_logging(verbose)
 
     llm_provider = _normalize_llm_provider(llm)
+    if llm_provider is None:
+        typer.echo("[info] --llm 未指定のため整形とSRT出力をスキップし、文字起こしJSONのみ保存します", err=True)
     align_kwargs = {}
     thresholds = _parse_thresholds(align_thresholds)
     if thresholds:
@@ -104,7 +106,7 @@ def run(
         llm_temperature=llm_temperature,
         llm_timeout=llm_timeout,
         align_kwargs=align_kwargs,
-        use_block_splitter=block_splitter,
+        llm_two_pass=llm_two_pass,
     )
     if resume:
         try:

@@ -1,5 +1,4 @@
-# テロップ自動生成ツール　アプリ名:Flow Cut
- 要件定義書
+要件定義書
 **Target Device:** Mac M3 (16GB Memory)
 **User:** 友人（非エンジニア）
 
@@ -10,43 +9,44 @@
 ## 2. 技術スタック
 
 ### 音声認識（3モデルで比較検証）
-プロトタイプで3つのモデルを実装し、速度・精度・word-levelタイムスタンプの品質を比較して最適なものを選定する。
+プロトタイプで3つのモデルを実装。**デフォルトは mlx-whisper large-v3（MLX版）** とする（Plan方針）。
 
-*   **モデル1: kotoba-whisper-v2.0-mlx（日本語特化×MLX最適化）**
-    *   リポジトリ: `kaiinui/kotoba-whisper-v2.0-mlx`
-    *   日本語に特化したdistil-large-v3ベース
-    *   Apple Silicon（M3）でMetal GPU加速
-    *   word-levelタイムスタンプ対応
-    *   ReazonSpeech 720万クリップで学習
-    *   **期待値**: 最速＆日本語精度高
-
-*   **モデル2: mlx-whisper large-v3（汎用×MLX最適化）**
+*   **モデル1: mlx-whisper large-v3（汎用×MLX最適化｜デフォルト）**
     *   リポジトリ: `mlx-community/whisper-large-v3-mlx`
-    *   OpenAI公式large-v3のMLX版
     *   Apple Silicon（M3）でMetal GPU加速
     *   word-levelタイムスタンプ対応
-    *   多言語対応で汎用性高
     *   **期待値**: 最高精度（専門用語・複雑な内容）
+
+*   **モデル2: kotoba-whisper-v2.0-mlx（日本語特化×MLX最適化）**
+    *   リポジトリ: `kaiinui/kotoba-whisper-v2.0-mlx`
+    *   distil-large-v3ベース / ReazonSpeech 720万クリップ
+    *   **期待値**: 日本語で高速・高精度
 
 *   **モデル3: OpenAI Whisper large-v3（公式実装）**
     *   リポジトリ: `openai/whisper`
-    *   OpenAI公式実装
     *   MPS（Metal Performance Shaders）対応
-    *   word-levelタイムスタンプ対応（別ライブラリ使用可能性あり）
-    *   最も広く使われている標準実装
-    *   **期待値**: 安定性・互換性重視のベースライン
+    *   word-levelタイムスタンプ対応
+    *   **期待値**: 安定性・互換性重視
 
 ### 文章整形（LLM API）
-以下のプロバイダーから選択可能。使用するモデルは`.env`ファイルで事前設定。  
-※ Blocking（事前分割）は現行フローでは無効化し、全文をLLMに渡して意味的改行のみをLLM側で行う。
+以下のプロバイダーから選択可能。**Plan推奨デフォルトは Google (gemini-3-pro-preview = Gemini 3.0 Pro)**、ただし **Pass3 のみ gemini-2.5-flash** でコスト最適化。  
+環境変数 `LLM_PASS1_MODEL` / `LLM_PASS2_MODEL` / `LLM_PASS3_MODEL` で各パスのモデルを自由に上書き可能（例: `gpt-4o`, `claude-3-5-sonnet-20241022`）。プロバイダー指定は `--llm` で行い、モデル名は文字列そのまま渡せる。
+※ CLIでは `--llm` を明示指定しない限り整形とSRT生成は実行されず、文字起こしJSONのみ保存される。  
+※ **三段階LLMワークフロー（Three-Pass）** を採用し、全文をLLMに渡して意味的改行および最終検証を実施。
+  - **Pass 1**: テキストクリーニング（削除・置換のみ）
+  - **Pass 2**: 17文字行分割（自然な改行位置を決定）
+  - **Pass 3**: 品質検証（Python検出器 + LLM修正、問題なし時はスキップ）
+  - **ブロック分割は廃止**: 旧BlockSplitterは撤去し、全文を一括で処理する。長尺対応は再開機構（`--resume`）とFuzzyアライメントで担保。
 
+*   **Google** (gemini-3-pro-preview / gemini-2.5-flash) ←推奨
+    - **Pass 1/2 デフォルト**: gemini-3-pro-preview（高精度）
+    - **Pass 3 デフォルト**: gemini-2.5-flash（コスト削減）
 *   **OpenAI** (gpt-4o, gpt-4o-mini など)
-*   **Google** (gemini-1.5-pro, gemini-1.5-flash など)
-*   **Anthropic** (claude-3-5-sonnet-20241022, claude-3-5-haiku-20241022 など) ※MVP完了後に比較テストを実施予定
+*   **Anthropic** (claude-3-5-sonnet-20241022, claude-3-5-haiku-20241022 など) ※MVP完了後に比較テスト予定
 
 **設計方針:**
 *   各プロバイダーのAPIキーとモデル名を`.env`ファイルで管理
-*   CLIオプション `--llm {openai|google|anthropic}` で実行時に切り替え
+*   CLIオプション `--llm {openai|google|anthropic}` で実行時に切り替え（未指定なら整形スキップ）
 *   非エンジニアでもモデル更新可能（コード変更不要）
 *   原文の単語を極力変更せず、アライメント精度を向上
 
@@ -55,11 +55,13 @@
 # OpenAI
 OPENAI_API_KEY=sk-proj-xxxxxxxxxxxxx
 OPENAI_MODEL=gpt-4o-mini
-
 # Google Gemini
 GOOGLE_API_KEY=AIzaSyxxxxxxxxxxxxxxxxx
-GOOGLE_MODEL=gemini-1.5-flash
-
+GOOGLE_MODEL=gemini-3-pro-preview
+# Two-pass モデル上書き（省略可）
+LLM_PASS1_MODEL=gemini-3-pro-preview
+LLM_PASS2_MODEL=gemini-3-pro-preview
+LLM_PASS3_MODEL=gemini-2.5-flash
 # Anthropic Claude
 ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxx
 ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
@@ -84,18 +86,18 @@ ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
 *   **同一環境に3モデルを共存:**
     *   mlx-whisper（kotoba含む）
     *   openai-whisper（公式）
-    *   faster-whisper（比較検証用）
-    *   競合が発生した場合のみ環境分離を検討
+    *   ※ faster-whisper は現時点で使用しない
+*   競合が発生した場合のみ環境分離を検討
 
-### GUI（フェーズ2で実装）
+### GUI（フェーズ4で実装）
 *   **フェーズ1:** GUIなし（Pythonスクリプトのみ）
-*   **フェーズ2:** 簡易GUI（Tkinter または Flet）
+*   **フェーズ4:** 簡易GUI（Tkinter または Flet）を想定（Planに合わせて後ろ倒し）
 *   **将来的な選択肢:** Tauri + React（モダンなUI）
 
 ## 3. 処理フロー（内部ロジック）
 
 ### Step 1: 精密文字起こし (Local)
-*   mlx-whisper（または faster-whisper）を使用し、音声からテキストデータを作成。
+*   mlx-whisper（デフォルト）または kotoba / OpenAI Whisper を使用し、音声からテキストデータを作成。
 *   **必須:** `word_timestamps=True`を指定して、単語ごとの開始・終了時刻を取得。
     *   例: `{'word': '設定を', 'start': 10.5, 'end': 11.2}, ...`
 *   **出力データ:**
@@ -103,8 +105,13 @@ ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
     *   単語レベルのタイムスタンプリスト（JSON形式で保持）
 
 ### Step 2: 文脈理解と整形 (Cloud API)
-*   Whisper全文をそのまま選択したLLM API（OpenAI/Google/Anthropic）へ送信し、意味的な改行と整形を行う（Blockingなし）。
-*   **プロンプトの役割:**
+*   **(現状)** Whisper全文を選択したLLM APIへ送信し、改行・整形を行う（Blockingなし）。
+*   **(採用方針：二段階LLMワークフロー)** `docs/specs/llm_two_pass_workflow.md` 参照  
+    - **パス1 (Text Cleaning):** 置換・削除のみ（挿入禁止）で誤字・フィラー除去。単語インデックス指定のJSONを返す。  
+    - **パス2 (Line Splitting):** 17文字分割のみを決める。行範囲をインデックスで返す。  
+    - **時間計算:** ローカルで行い、Whisperのwordタイムスタンプを維持する（尺伸び防止）。  
+    - **タイムスタンプ補正 (Clamping):** LLMのインデックス指定ミスによる時間の巻き戻りを検知し、強制的に時系列順に補正する。
+*   **プロンプトの役割（現行1パス）:**
     1.  フィラー（えー、あー等）の削除。
     2.  **「1行17文字以内」**の制約を適用。
     3.  文法・意味構造解析による**「自然な改行位置」**の決定。
@@ -124,7 +131,7 @@ ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
 *   **失敗時の動作:**
     *   処理済みブロックを `temp/progress_{timestamp}.json` に保存
     *   エラー終了時に具体的な再開手順を表示
-    *   例: `python main.py input.wav --resume temp/progress_20250120_103000.json`
+    *   例: `python -m src.cli.main run input.wav --resume temp/progress_20250120_103000.json`
 *   **ログ記録:** `logs/processing.log` に処理状況を記録
 
 ### Step 3: タイムスタンプ再計算 (Local)
@@ -188,6 +195,13 @@ LLM出力からタグを分離し、表示テキストとアライメント情�
     *   LLMがフィラーを削除したり単語を変更すると、完全一致は困難
     *   Fuzzy Matchingの閾値調整が重要（まず90%で開始し、実データで調整）
 
+#### 3-3. タイムスタンプ補正 (Clamping)
+LLM（特にPass 2）が誤ったインデックスを指定し、SRTの開始時刻が前の行の終了時刻より過去になる「巻き戻り」現象を防ぐ。
+
+1.  **巻き戻り検知:** `current_start < last_end` の場合
+2.  **クランプ処理:** `current_start = last_end` に強制補正
+3.  **整合性維持:** `current_end < current_start` となった場合は `current_end = current_start + 0.1` で微調整
+
 ### Step 4: SRT出力
 *   決定したタイムコードとテキストをSRT形式でファイルに書き出す。
 *   **SRTフォーマット:**
@@ -195,61 +209,47 @@ LLM出力からタグを分離し、表示テキストとアライメント情�
     1
     00:00:10,500 --> 00:00:11,200
     設定を開いて
-
     2
     00:00:11,200 --> 00:00:12,000
     くださいね
     ```
-
 ## 4. UI/UX 要件
-
 ### フェーズ1: コマンドライン版（優先実装）
-
-#### 基本実行
+#### 基本実行（Typer CLI）
 ```bash
-python main.py input.wav [オプション]
+python -m src.cli.main run <音声ファイル> [オプション]
 ```
 
-#### オプション一覧
+#### 主なオプション（実装に合わせて更新）
+- `--models kotoba,mlx` : 使用するランナーをカンマ区切り指定。未指定なら **MLX large-v3のみ** 実行。
+- `--llm {google|openai|anthropic}` : LLM整形プロバイダー。**未指定なら整形・SRT出力を行わず、文字起こしJSONのみ保存**（Plan推奨は google）。
+- `--rewrite / --no-rewrite` : 語尾リライトを有効化（デフォルトNoneでプロバイダー既定に従う）。
+- `--llm-two-pass` : 二段階LLMモード（パス1: 置換/削除のみ、パス2: 17文字分割）を有効化。時間計算はローカル固定で尺伸びを防ぐ。
+- `--align-thresholds 90,85,80` : RapidFuzz類似度の閾値リスト。
+- `--align-gap 0.1` : 行間の最小ギャップ秒。
+- `--align-fallback-padding 0.3` : フォールバック時に前行へ足す秒数。
+- `--language ja` / `--chunk-size 30` などは各ランナーへ伝播。
+- `--resume temp/progress_xxx.json` : 途中から再開。
+- `--simulate/--no-simulate` : ランナーのシミュレーション切替（デフォルトON）。
 
-##### Whisperモデル選択
-```bash
---whisper-model {kotoba|mlx|openai}
-```
-- `kotoba`: 日本語特化（推奨） - `kaiinui/kotoba-whisper-v2.0-mlx`
-- `mlx`: 汎用高精度 - `mlx-community/whisper-large-v3-mlx`
-- `openai`: 標準実装 - `openai/whisper large-v3`
-- **デフォルト:** `kotoba`
-
-##### LLMプロバイダー選択
-```bash
---llm {openai|google|anthropic}
-```
-- 使用するモデルは `.env` ファイルで事前設定
-- **デフォルト:** `openai`
-- **例:** `python main.py input.wav --llm google`
-
-##### その他のオプション
-- `--rewrite`: 語尾調整・リライトを行う（デフォルトOFF）
-- `--output`: 出力ファイルパス（デフォルト: `input_subtitle.srt`）
-- `--resume`: 中断した処理を再開（`--resume temp/progress_xxxx.json`）
+#### 出力パス
+- 音声×モデル×実行時刻ごとに `temp/poc_samples/{run_id}.json` を保存。
+- LLM整形を実行した場合のみ `output/{run_id}.srt` を自動命名で保存（`--output` オプションは存在しない）。
 
 #### 実行例
 ```bash
-# 基本実行（デフォルト設定）
-python main.py input.wav
+# MLXのみで文字起こし（整形なし）
+python -m src.cli.main run samples/sample_audio.m4a
 
-# Google Geminiを使用
-python main.py input.wav --llm google
+# MLXとOpenAI Whisperを実行し、Geminiで整形＋SRT出力
+python -m src.cli.main run samples/sample_audio.m4a \
+  --models mlx,openai \
+  --llm google \
+  --align-thresholds 90,85,80 \
+  --align-gap 0.1
 
-# リライトありで実行
-python main.py input.wav --rewrite
-
-# Whisperモデル変更
-python main.py input.wav --whisper-model mlx
-
-# すべて指定
-python main.py input.wav --llm anthropic --whisper-model openai --rewrite --output result.srt
+# リライト有効＋Anthropic
+python -m src.cli.main run samples/sample_audio.m4a --llm anthropic --rewrite
 ```
 
 #### 進捗表示
@@ -257,9 +257,10 @@ python main.py input.wav --llm anthropic --whisper-model openai --rewrite --outp
 *   tqdmなどでプログレスバー表示
 
 #### 出力
-*   元の音声ファイルと同じフォルダに `filename_subtitle.srt` を保存
+*   LLM整形を実行した場合のみ `output/{音声名}_{モデル}_{日時}.srt` を自動保存（--outputオプションなし）
+*   文字起こしJSONは `temp/poc_samples/{run_id}.json` に保存
 
-### フェーズ2: GUIアプリ（将来実装）
+### フェーズ4: GUIアプリ（将来実装｜Plan準拠）
 友人にとっての使いやすさを考慮し、設定項目は最小限にする。
 
 *   **メイン画面:**
@@ -282,10 +283,8 @@ OpenAI/Google/Anthropicの各LLMに送信する指示のプロトタイプです
 ```
 【役割】
 あなたはプロの動画編集者です。
-
 【指示】
 以下の音声認識テキストを、動画テロップ用に整形してください。
-
 【制約条件】
 1. **1行あたり全角17文字以内**に収めること。
 2. 文脈を読み、**「意味のまとまり」や「息継ぎのタイミング」として自然な位置**で改行すること。
@@ -293,11 +292,9 @@ OpenAI/Google/Anthropicの各LLMに送信する指示のプロトタイプです
 4. **原文の単語は極力変更しないこと**。表記ゆれのみ修正可（例：「出来る」→「できる」）。
 5. 各行の最後に、その行の最後の単語を `[WORD: 単語]` の形式で必ず付記すること。
 6. 出力は整形済みテキストのみ。説明文は不要。
-
 【出力フォーマット例】
 設定を開いて[WORD: 開いて]
 くださいね[WORD: くださいね]
-
 【入力テキスト】
 {transcribed_text}
 ```
@@ -307,10 +304,8 @@ OpenAI/Google/Anthropicの各LLMに送信する指示のプロトタイプです
 ```
 【役割】
 あなたはプロの動画編集者です。
-
 【指示】
 以下の音声認識テキストを、動画テロップ用に整形してください。
-
 【制約条件】
 1. **1行あたり全角17文字以内**に収めること。
 2. 文脈を読み、**「意味のまとまり」や「息継ぎのタイミング」として自然な位置**で改行すること。
@@ -319,11 +314,9 @@ OpenAI/Google/Anthropicの各LLMに送信する指示のプロトタイプです
 5. 各行の最後に、その行の最後の単語を `[WORD: 単語]` の形式で必ず付記すること。
    - リライトした場合、**元の音声で実際に発話された単語**をWORDタグに記載すること。
 6. 出力は整形済みテキストのみ。説明文は不要。
-
 【出力フォーマット例】
 設定を開いてください[WORD: くださいね]
 （元の音声: 「設定を開いてくださいね」を「設定を開いてください」にリライト）
-
 【入力テキスト】
 {transcribed_text}
 ```
@@ -335,60 +328,29 @@ OpenAI/Google/Anthropicの各LLMに送信する指示のプロトタイプです
 
 ---
 
-## 6. 開発ロードマップ
+## 6. 開発ロードマップ（Plan準拠）
 
-### フェーズ1: コアロジック実装（最優先）
-**目標:** GUIなしのPythonスクリプトで、音声ファイル → SRTファイルの自動生成を実現
+### フェーズ1: コアロジック実装（完了間近）
+**目標:** CLIで音声 → SRT を自動生成できるPoCを確立
+- 3モデル（mlxデフォルト・kotoba・openai）実装と比較
+- 進捗JSON・SRT出力・エラーハンドリングの統合
 
-#### ステップ1-1: 音声認識の検証（3モデル比較）
-*   **3モデルの実装:**
-    1.  kotoba-whisper-v2.0-mlx（日本語特化×MLX）
-    2.  mlx-whisper large-v3（汎用×MLX）
-    3.  OpenAI Whisper large-v3（公式実装）
-*   **評価項目:**
-    *   日本語音声での文字起こし精度
-    *   処理速度（リアルタイム倍率）
-    *   word-levelタイムスタンプの品質（単語境界の正確性）
-    *   メモリ使用量
-*   **テストデータ:** 友人の実際の動画音声（5-10分程度）
-*   **採用モデルの決定:** 総合評価で最適なモデルを選択
+### フェーズ2: LLM整形＋タイムスタンプアライメント精度向上（進行中）
+- `[WORD: ]` タグを前提にRapidFuzz閾値をチューニング（`--align-thresholds`, `--align-gap`）
+- 実データで17文字制約と自然改行の精度評価、プロンプト改善
+- LLMプロバイダー（推奨: Google）で整形を安定化
 
-#### ステップ1-2: プロンプトとアライメントの検証
-*   音声認識結果をOpenAI APIで整形（基本プロンプトを使用）
-*   `[WORD: xxx]` タグを使ったタイムスタンプアライメントの実装
-*   Fuzzy Matching（RapidFuzz）の精度テスト
-*   **「17文字・自然な区切り」の実現度を確認、プロンプト調整**
+### フェーズ3: CLI UX / 再開機構強化
+- `--resume` フローの長尺E2Eスモーク
+- ログ整備と cleanup サブコマンド
+- 実行メッセージ/ヘルプを初心者向けに簡潔化
 
-#### ステップ1-3: 統合とSRT出力
-*   Step 1〜4を統合した完全なパイプラインを実装
-*   エラーハンドリング（音声ファイル形式、API失敗時など）
-*   進捗表示（tqdm等）
-*   実際の音声ファイルで動作確認
+### フェーズ4: GUIプロトタイプ
+- Tkinter / Flet でドラッグ＆ドロップ + 進捗バー
+- 最小限のオプション（モデル選択・リライト有無）に限定
 
-#### 成果物
-*   `main.py`: コマンドライン実行可能なスクリプト
-*   `README.md`: 使い方、セットアップ手順
-*   `.env.example`: 環境変数のテンプレート（APIキー設定例）
-*   `requirements.txt`: 必要なPythonパッケージ一覧
-
----
-
-### フェーズ2: GUI実装（ロジック完成後）
-**目標:** 友人が使いやすいGUIアプリ化
-
-*   Tkinter または Flet でシンプルなGUIを実装
-*   ドラッグ＆ドロップ対応
-*   進捗バー表示
-*   オプション設定（リライト有無、モデル選択）
-
----
-
-### フェーズ3: パッケージ化（GUI完成後）
-**目標:** Mac M3で.appファイルとして配布可能にする
-
-*   PyInstaller または py2app でバイナリ化
-*   友人のMacで動作確認
-*   必要に応じてインストールガイド作成
+### フェーズ5: パッケージ化（GUI後）
+- PyInstaller / py2app 等で .app 化し、友人環境で配布確認
 
 ---
 
@@ -400,15 +362,7 @@ OpenAI/Google/Anthropicの各LLMに送信する指示のプロトタイプです
 | LLMが17文字制約を守らない | 中 | プロンプト改善、タグ削除後の17文字再検証と自動再分割 |
 | LLMが `[WORD: ]` タグを付け忘れる | 中 | プロンプトで明示的に指示、パース時に警告ログ出力 |
 | 特定のLLMプロバイダーが障害 | 中 | 3社から選択可能にし、障害時は別プロバイダーへ切り替え |
-| LLM APIコストが高騰 | 低 | 各社の低コストモデルを.envでデフォルト設定（gpt-4o-mini, gemini-1.5-flash等） |
-| M3 MacでのGPU加速が不安定 | 中 | faster-whisper（CPU版）にフォールバック |
-| 長時間音声でメモリ不足 | 中 | ブロック分割処理（1200文字/30秒単位）、バッチサイズ調整 |
+| LLM APIコストが高騰 | 低 | 各社の低コストモデルを.envでデフォルト設定（gpt-4o-mini, gemini-2.5-flash 等） |
+| M3 MacでのGPU加速が不安定 | 中 | MLXが落ちる場合は openai-whisper をCPU/MPSで実行する |
+| 長時間音声でメモリ不足 | 中 | 全文処理前提。必要に応じて `--resume` で区切り実行し、将来必要なら軽量ブロック分割を再導入 |
 | API失敗時の処理中断 | 中 | 進捗を`temp/progress_*.json`に保存、--resumeオプションで再開可能に |
-
----
-
-## 次のアクション
-
-**まずは「フェーズ1: ステップ1-1」から開始します。**
-
-音声認識ライブラリの選定と検証を行い、最適な技術スタックを確定させましょう。
