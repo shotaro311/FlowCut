@@ -21,7 +21,7 @@ class LLMSettings:
     openai_whisper_model: str = "whisper-1"
     openai_base_url: str = "https://api.openai.com/v1"
     google_api_key: str | None = None
-    google_model: str = "gemini-3.0-pro-preview"
+    google_model: str = "gemini-3-pro-preview"
     google_api_base: str = "https://generativelanguage.googleapis.com/v1beta"
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-3-5-sonnet-20241022"
@@ -50,7 +50,7 @@ def get_settings() -> AppSettings:
         openai_whisper_model=_env("OPENAI_WHISPER_MODEL", "whisper-1"),
         openai_base_url=_env("OPENAI_BASE_URL", "https://api.openai.com/v1"),
         google_api_key=_env("GOOGLE_API_KEY"),
-        google_model=_env("GOOGLE_MODEL", "gemini-3.0-pro-preview"),
+        google_model=_env("GOOGLE_MODEL", "gemini-3-pro-preview"),
         google_api_base=_env("GOOGLE_API_BASE", "https://generativelanguage.googleapis.com/v1beta"),
         anthropic_api_key=_env("ANTHROPIC_API_KEY"),
         anthropic_model=_env("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022"),
