@@ -29,12 +29,14 @@
     *   **期待値**: 安定性・互換性重視
 
 ### 文章整形（LLM API）
-以下のプロバイダーから選択可能。**Plan推奨デフォルトは Google (gemini-1.5-flash)**。  
+以下のプロバイダーから選択可能。**Plan推奨デフォルトは Google (gemini-3-pro-preview = Gemini 3.0 Pro)**、ただし **Pass3 のみ gemini-2.5-flash** でコスト最適化。  
+環境変数 `LLM_PASS1_MODEL` / `LLM_PASS2_MODEL` / `LLM_PASS3_MODEL` で各パスのモデルを自由に上書き可能（例: `gpt-4o`, `claude-3-5-sonnet-20241022`）。プロバイダー指定は `--llm` で行い、モデル名は文字列そのまま渡せる。
 ※ CLIでは `--llm` を明示指定しない限り整形とSRT生成は実行されず、文字起こしJSONのみ保存される。  
 ※ **三段階LLMワークフロー（Three-Pass）** を採用し、全文をLLMに渡して意味的改行および最終検証を実施。
   - **Pass 1**: テキストクリーニング（削除・置換のみ）
   - **Pass 2**: 17文字行分割（自然な改行位置を決定）
   - **Pass 3**: 品質検証（Python検出器 + LLM修正、問題なし時はスキップ）
+  - **ブロック分割は廃止**: 旧BlockSplitterは撤去し、全文を一括で処理する。長尺対応は再開機構（`--resume`）とFuzzyアライメントで担保。
 
 *   **Google** (gemini-3-pro-preview / gemini-2.5-flash) ←推奨
     - **Pass 1/2 デフォルト**: gemini-3-pro-preview（高精度）
@@ -55,7 +57,11 @@ OPENAI_API_KEY=sk-proj-xxxxxxxxxxxxx
 OPENAI_MODEL=gpt-4o-mini
 # Google Gemini
 GOOGLE_API_KEY=AIzaSyxxxxxxxxxxxxxxxxx
-GOOGLE_MODEL=gemini-1.5-flash
+GOOGLE_MODEL=gemini-3-pro-preview
+# Two-pass モデル上書き（省略可）
+LLM_PASS1_MODEL=gemini-3-pro-preview
+LLM_PASS2_MODEL=gemini-3-pro-preview
+LLM_PASS3_MODEL=gemini-2.5-flash
 # Anthropic Claude
 ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxx
 ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
@@ -356,7 +362,7 @@ OpenAI/Google/Anthropicの各LLMに送信する指示のプロトタイプです
 | LLMが17文字制約を守らない | 中 | プロンプト改善、タグ削除後の17文字再検証と自動再分割 |
 | LLMが `[WORD: ]` タグを付け忘れる | 中 | プロンプトで明示的に指示、パース時に警告ログ出力 |
 | 特定のLLMプロバイダーが障害 | 中 | 3社から選択可能にし、障害時は別プロバイダーへ切り替え |
-| LLM APIコストが高騰 | 低 | 各社の低コストモデルを.envでデフォルト設定（gpt-4o-mini, gemini-1.5-flash等） |
+| LLM APIコストが高騰 | 低 | 各社の低コストモデルを.envでデフォルト設定（gpt-4o-mini, gemini-2.5-flash 等） |
 | M3 MacでのGPU加速が不安定 | 中 | MLXが落ちる場合は openai-whisper をCPU/MPSで実行する |
-| 長時間音声でメモリ不足 | 中 | ブロック分割処理（1200文字/30秒単位）、バッチサイズ調整 |
+| 長時間音声でメモリ不足 | 中 | 全文処理前提。必要に応じて `--resume` で区切り実行し、将来必要なら軽量ブロック分割を再導入 |
 | API失敗時の処理中断 | 中 | 進捗を`temp/progress_*.json`に保存、--resumeオプションで再開可能に |

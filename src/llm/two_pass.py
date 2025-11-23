@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass
 from typing import List, Sequence, Dict, Any, Iterable
 
+from src.config import get_settings
 from src.llm.formatter import FormatterError, get_provider, FormatterRequest
 from src.llm.prompts import PromptPayload
 from src.transcribe.base import WordTimestamp
@@ -127,13 +128,14 @@ class TwoPassFormatter:
         pass2_model: str | None = None,
         pass3_model: str | None = None,
     ) -> None:
+        settings = get_settings().llm
         self.provider_slug = llm_provider
         self.temperature = temperature
         self.timeout = timeout
         # Per-pass model selection
-        self.pass1_model = pass1_model or "gemini-3-pro-preview"
-        self.pass2_model = pass2_model or "gemini-3-pro-preview"
-        self.pass3_model = pass3_model or "gemini-2.5-flash"  # Default to Flash for cost efficiency
+        self.pass1_model = pass1_model or settings.pass1_model
+        self.pass2_model = pass2_model or settings.pass2_model
+        self.pass3_model = pass3_model or settings.pass3_model  # Default to Flash for cost efficiency
 
     def _call_llm(self, prompt_text: str, model_override: str | None = None) -> str:
         provider = get_provider(self.provider_slug)
@@ -141,8 +143,15 @@ class TwoPassFormatter:
         
         # Add model override to metadata if specified
         metadata = {}
-        if model_override and self.provider_slug == "google":
-            metadata["google_model"] = model_override
+        if model_override:
+            if self.provider_slug == "google":
+                metadata["google_model"] = model_override
+            elif self.provider_slug == "openai":
+                metadata["openai_model"] = model_override
+            elif self.provider_slug == "anthropic":
+                metadata["anthropic_model"] = model_override
+            else:
+                metadata["model"] = model_override
         
         req = FormatterRequest(
             block_text="",
