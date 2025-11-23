@@ -31,6 +31,7 @@ class LLMSettings:
     pass1_model: str = "gemini-3-pro-preview"
     pass2_model: str = "gemini-3-pro-preview"
     pass3_model: str = "gemini-2.5-flash"
+    pass4_model: str = "gemini-2.5-flash"
 
 
 @dataclass(slots=True)
@@ -63,6 +64,7 @@ def get_settings() -> AppSettings:
         pass1_model=_env("LLM_PASS1_MODEL", "gemini-3-pro-preview"),
         pass2_model=_env("LLM_PASS2_MODEL", "gemini-3-pro-preview"),
         pass3_model=_env("LLM_PASS3_MODEL", "gemini-2.5-flash"),
+        pass4_model=_env("LLM_PASS4_MODEL", _env("LLM_PASS3_MODEL", "gemini-2.5-flash")),
     )
     return AppSettings(llm=llm)
 
