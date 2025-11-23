@@ -118,19 +118,37 @@ def _safe_trim_json_response(text: str) -> Any:
 class TwoPassFormatter:
     """Run two LLM passes and produce SRT without anchor alignment."""
 
-    def __init__(self, llm_provider: str, temperature: float | None = None, timeout: float | None = None) -> None:
+    def __init__(
+        self,
+        llm_provider: str,
+        temperature: float | None = None,
+        timeout: float | None = None,
+        pass1_model: str | None = None,
+        pass2_model: str | None = None,
+        pass3_model: str | None = None,
+    ) -> None:
         self.provider_slug = llm_provider
         self.temperature = temperature
         self.timeout = timeout
+        # Per-pass model selection
+        self.pass1_model = pass1_model or "gemini-3-pro-preview"
+        self.pass2_model = pass2_model or "gemini-3-pro-preview"
+        self.pass3_model = pass3_model or "gemini-2.5-flash"  # Default to Flash for cost efficiency
 
-    def _call_llm(self, prompt_text: str) -> str:
+    def _call_llm(self, prompt_text: str, model_override: str | None = None) -> str:
         provider = get_provider(self.provider_slug)
         payload = PromptPayload(system_prompt="", user_prompt=prompt_text)
+        
+        # Add model override to metadata if specified
+        metadata = {}
+        if model_override and self.provider_slug == "google":
+            metadata["google_model"] = model_override
+        
         req = FormatterRequest(
             block_text="",
             provider=self.provider_slug,
             rewrite=False,
-            metadata={},
+            metadata=metadata,
             line_max_chars=17.0,
             max_retries=1,
             temperature=self.temperature,
@@ -144,6 +162,7 @@ class TwoPassFormatter:
         words: Sequence[WordTimestamp],
         *,
         max_chars: float = 17.0,
+        enable_pass3: bool = True,
     ) -> TwoPassResult | None:
         if not words:
             raise FormatterError("wordタイムスタンプが空です")
@@ -152,7 +171,7 @@ class TwoPassFormatter:
         # Pass1: replace/delete only
         pass1_prompt = self._build_pass1_prompt(text, words)
         logger.debug("Calling LLM for Pass 1. Prompt length: %d", len(pass1_prompt))
-        raw1 = self._call_llm(pass1_prompt)
+        raw1 = self._call_llm(pass1_prompt, model_override=self.pass1_model)
         parsed1 = _safe_trim_json_response(raw1)
         ops = _parse_operations(parsed1)
         updated_words = _apply_operations(words, ops) if ops else list(words)
@@ -165,11 +184,33 @@ class TwoPassFormatter:
         # Pass2: line splits
         pass2_prompt = self._build_pass2_prompt(updated_words, max_chars=max_chars)
         logger.debug("Calling LLM for Pass 2. Prompt length: %d", len(pass2_prompt))
-        raw2 = self._call_llm(pass2_prompt)
+        raw2 = self._call_llm(pass2_prompt, model_override=self.pass2_model)
         parsed2 = _safe_trim_json_response(raw2)
         lines = _parse_lines(parsed2)
         if not lines:
             raise FormatterError("行分割結果が空です")
+
+        # Pass3: Validation (optional, hybrid approach)
+        if enable_pass3:
+            from src.llm.validators import detect_issues
+            issues = detect_issues(lines, updated_words)
+            
+            if issues:
+                logger.info("two-pass: pass3 start (%d issues detected)", len(issues))
+                for issue in issues:
+                    logger.debug("  - %s", issue.description)
+                
+                pass3_prompt = self._build_pass3_prompt(lines, updated_words, issues)
+                logger.debug("Calling LLM for Pass 3. Prompt length: %d", len(pass3_prompt))
+                raw3 = self._call_llm(pass3_prompt, model_override=self.pass3_model)
+                parsed3 = _safe_trim_json_response(raw3)
+                lines = _parse_lines(parsed3)
+                if not lines:
+                    logger.warning("Pass 3 returned empty lines, using Pass 2 output")
+                    # Revert to Pass 2 output if Pass 3 fails
+                    lines = _parse_lines(parsed2)
+            else:
+                logger.info("two-pass: pass3 skipped (no issues detected)")
 
         segments = self._ranges_to_segments(updated_words, lines)
         logger.info("two-pass: completed (segments=%d)", len(segments))
@@ -332,6 +373,40 @@ class TwoPassFormatter:
             f"単語リスト（index:word）:\n{indexed}\n\n"
             "# Output\n"
             '以下のJSONだけを返してください:\n{"lines":[{"from":0,"to":10,"text":"私は大学の12月ぐらい"},{"from":11,"to":25,"text":"政治家になろうと決めていて"}]}\n'
+        )
+
+    def _build_pass3_prompt(self, lines: Sequence[LineRange], words: Sequence[WordTimestamp], issues) -> str:
+        """Build Pass 3 prompt for fixing detected issues."""
+        indexed = _build_indexed_words(words)
+        
+        # Format issues for LLM
+        issue_text = "\n".join([
+            f"- {issue.description} → {issue.suggested_action}"
+            for issue in issues
+        ])
+        
+        # Format current lines as JSON
+        current_lines = json.dumps([
+            {"from": l.start_idx, "to": l.end_idx, "text": l.text}
+            for l in lines
+        ], ensure_ascii=False, indent=2)
+        
+        return (
+            "# Role\n"
+            "あなたは最終チェック担当の熟練編集者です。\n"
+            "Pass 2で作成された字幕の行分割に問題がないか確認し、必要最小限の修正を行ってください。\n\n"
+            "# 検出された問題\n"
+            f"{issue_text}\n\n"
+            "# 修正ルール\n"
+            "1. **1-3文字の極端に短い行**: 前行または次行と統合\n"
+            "2. **引用表現の分割「〜って言う/思う」**: 統合して1行に\n"
+            "3. **修正後も制約を維持**: 17文字以内・4文字以上\n"
+            "4. **最小限の修正**: 問題箇所のみ修正（全体を作り直さない）\n\n"
+            "# Input\n"
+            f"単語リスト（index:word）:\n{indexed}\n\n"
+            f"現在の行分割:\n{current_lines}\n\n"
+            "# Output\n"
+            '修正後の行分割（JSONのみ）:\n{"lines":[{"from":0,"to":10,"text":"..."}]}\n'
         )
 
 
