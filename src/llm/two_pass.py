@@ -132,6 +132,35 @@ def _safe_trim_json_response(text: str) -> Any:
         raise FormatterError(f"LLM JSONのパースに失敗しました: {exc}") from exc
 
 
+def _call_llm_with_parse(
+    call_fn,
+    *,
+    pass_label: str,
+    prompt: str,
+    model_override: str | None,
+    retries: int = 2,
+    soft_fail: bool = False,
+) -> tuple[str | None, Any | None]:
+    """
+    Call LLM, log raw, parse JSON with limited retries.
+    - soft_fail=True: return (None, None) instead of raising after retries.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(1, retries + 1):
+        raw = call_fn(prompt, model_override=model_override)
+        _log_raw_response(pass_label, raw)
+        try:
+            parsed = _safe_trim_json_response(raw)
+            return raw, parsed
+        except FormatterError as exc:
+            last_exc = exc
+            logger.warning("%s parse failed (attempt %d/%d): %s", pass_label, attempt, retries, exc)
+    if soft_fail:
+        logger.error("%s parse failed after %d attempts; falling back", pass_label, retries)
+        return None, None
+    raise last_exc  # type: ignore[misc]
+
+
 class TwoPassFormatter:
     """Run two LLM passes and produce SRT without anchor alignment."""
 
@@ -196,9 +225,14 @@ class TwoPassFormatter:
         # Pass1: replace/delete only
         pass1_prompt = self._build_pass1_prompt(text, words)
         logger.debug("Calling LLM for Pass 1. Prompt length: %d", len(pass1_prompt))
-        raw1 = self._call_llm(pass1_prompt, model_override=self.pass1_model)
-        _log_raw_response("pass1", raw1)
-        parsed1 = _safe_trim_json_response(raw1)
+        raw1, parsed1 = _call_llm_with_parse(
+            self._call_llm,
+            pass_label="pass1",
+            prompt=pass1_prompt,
+            model_override=self.pass1_model,
+            retries=2,
+            soft_fail=False,
+        )
         ops = _parse_operations(parsed1)
         updated_words = _apply_operations(words, ops) if ops else list(words)
 
@@ -210,9 +244,14 @@ class TwoPassFormatter:
         # Pass2: line splits
         pass2_prompt = self._build_pass2_prompt(updated_words, max_chars=max_chars)
         logger.debug("Calling LLM for Pass 2. Prompt length: %d", len(pass2_prompt))
-        raw2 = self._call_llm(pass2_prompt, model_override=self.pass2_model)
-        _log_raw_response("pass2", raw2)
-        parsed2 = _safe_trim_json_response(raw2)
+        raw2, parsed2 = _call_llm_with_parse(
+            self._call_llm,
+            pass_label="pass2",
+            prompt=pass2_prompt,
+            model_override=self.pass2_model,
+            retries=2,
+            soft_fail=False,
+        )
         lines = _parse_lines(parsed2)
         if not lines:
             raise FormatterError("行分割結果が空です")
@@ -229,14 +268,22 @@ class TwoPassFormatter:
 
         pass3_prompt = self._build_pass3_prompt(lines, updated_words, issues)
         logger.debug("Calling LLM for Pass 3. Prompt length: %d", len(pass3_prompt))
-        raw3 = self._call_llm(pass3_prompt, model_override=self.pass3_model)
-        _log_raw_response("pass3", raw3)
-        parsed3 = _safe_trim_json_response(raw3)
-        pass3_lines = _parse_lines(parsed3)
-        if pass3_lines:
-            lines = pass3_lines
+        raw3, parsed3 = _call_llm_with_parse(
+            self._call_llm,
+            pass_label="pass3",
+            prompt=pass3_prompt,
+            model_override=self.pass3_model,
+            retries=2,
+            soft_fail=True,
+        )
+        if parsed3:
+            pass3_lines = _parse_lines(parsed3)
+            if pass3_lines:
+                lines = pass3_lines
+            else:
+                logger.warning("Pass 3 returned empty lines, using Pass 2 output")
         else:
-            logger.warning("Pass 3 returned empty lines, using Pass 2 output")
+            logger.warning("Pass 3 parsing failed; using Pass 2 output")
 
         segments = self._ranges_to_segments(updated_words, lines)
         logger.info("two-pass: completed (segments=%d)", len(segments))
