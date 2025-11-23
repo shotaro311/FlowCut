@@ -199,27 +199,25 @@ class TwoPassFormatter:
         if not lines:
             raise FormatterError("行分割結果が空です")
 
-        # Pass3: Validation (optional, hybrid approach)
-        if enable_pass3:
-            from src.llm.validators import detect_issues
-            issues = detect_issues(lines, updated_words)
-            
-            if issues:
-                logger.info("two-pass: pass3 start (%d issues detected)", len(issues))
-                for issue in issues:
-                    logger.debug("  - %s", issue.description)
-                
-                pass3_prompt = self._build_pass3_prompt(lines, updated_words, issues)
-                logger.debug("Calling LLM for Pass 3. Prompt length: %d", len(pass3_prompt))
-                raw3 = self._call_llm(pass3_prompt, model_override=self.pass3_model)
-                parsed3 = _safe_trim_json_response(raw3)
-                lines = _parse_lines(parsed3)
-                if not lines:
-                    logger.warning("Pass 3 returned empty lines, using Pass 2 output")
-                    # Revert to Pass 2 output if Pass 3 fails
-                    lines = _parse_lines(parsed2)
-            else:
-                logger.info("two-pass: pass3 skipped (no issues detected)")
+        # Pass3: Validation (now always executed)
+        from src.llm.validators import detect_issues
+        if not enable_pass3:
+            logger.warning("enable_pass3=False は非推奨になりました。Pass3は常に実行されます。")
+
+        issues = detect_issues(lines, updated_words)
+        logger.info("two-pass: pass3 start (%d issues detected)", len(issues))
+        for issue in issues:
+            logger.debug("  - %s", issue.description)
+
+        pass3_prompt = self._build_pass3_prompt(lines, updated_words, issues)
+        logger.debug("Calling LLM for Pass 3. Prompt length: %d", len(pass3_prompt))
+        raw3 = self._call_llm(pass3_prompt, model_override=self.pass3_model)
+        parsed3 = _safe_trim_json_response(raw3)
+        pass3_lines = _parse_lines(parsed3)
+        if pass3_lines:
+            lines = pass3_lines
+        else:
+            logger.warning("Pass 3 returned empty lines, using Pass 2 output")
 
         segments = self._ranges_to_segments(updated_words, lines)
         logger.info("two-pass: completed (segments=%d)", len(segments))
@@ -387,30 +385,37 @@ class TwoPassFormatter:
     def _build_pass3_prompt(self, lines: Sequence[LineRange], words: Sequence[WordTimestamp], issues) -> str:
         """Build Pass 3 prompt for fixing detected issues."""
         indexed = _build_indexed_words(words)
-        
+
         # Format issues for LLM
-        issue_text = "\n".join([
-            f"- {issue.description} → {issue.suggested_action}"
-            for issue in issues
-        ])
-        
+        if issues:
+            issue_text = "\n".join(
+                [f"- {issue.description} → {issue.suggested_action}" for issue in issues]
+            )
+        else:
+            issue_text = "問題は検出されませんでした。全行を確認し、以下のルールに従って最小限の修正を行ってください。"
+
         # Format current lines as JSON
-        current_lines = json.dumps([
-            {"from": l.start_idx, "to": l.end_idx, "text": l.text}
-            for l in lines
-        ], ensure_ascii=False, indent=2)
-        
+        current_lines = json.dumps(
+            [{"from": l.start_idx, "to": l.end_idx, "text": l.text} for l in lines],
+            ensure_ascii=False,
+            indent=2,
+        )
+
         return (
             "# Role\n"
-            "あなたは最終チェック担当の熟練編集者です。\n"
+            "あなたはテロップの最終チェック担当の熟練編集者です。\n"
             "Pass 2で作成された字幕の行分割に問題がないか確認し、必要最小限の修正を行ってください。\n\n"
             "# 検出された問題\n"
             f"{issue_text}\n\n"
             "# 修正ルール\n"
-            "1. **1-3文字の極端に短い行**: 前行または次行と統合\n"
+            "1. **1-4文字の極端に短い行**: 前行または次行と統合し、結合後に全行がルールに沿っているか再確認\n"
             "2. **引用表現の分割「〜って言う/思う」**: 統合して1行に\n"
-            "3. **修正後も制約を維持**: 17文字以内・4文字以上\n"
-            "4. **最小限の修正**: 問題箇所のみ修正（全体を作り直さない）\n\n"
+            "3. **修正後も制約を維持**: 17文字以内・5文字以上\n"
+            "4. **最小限の修正**: 問題箇所のみ修正（全体を作り直さない）\n"
+            "5. **要約・翻訳・意訳をしない**。語句の追加・削除もしない\n"
+            "6. **語の途中で切れている箇所は必ず連結**（分断された語を統合）\n"
+            "7. **改行の優先度**: (1)「。?!」直後 → (2)「、」直後 → (3) 接続助詞・係助詞など句が自然に切れる後ろ。名詞句/動詞句の途中は切らない。迷う場合は改行しない\n"
+            "8. **元の語順と文脈を保つ**。句読点がない場合も上記7に沿って自然に整形する\n\n"
             "# Input\n"
             f"単語リスト（index:word）:\n{indexed}\n\n"
             f"現在の行分割:\n{current_lines}\n\n"
