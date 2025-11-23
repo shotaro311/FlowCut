@@ -386,11 +386,17 @@ class TwoPassFormatter:
             "あなたはプロの字幕エディターです。以下の単語列を順番を変えずに最小限の修正だけ加えてください。\n"
             "- 許可される操作: replace, delete（挿入は禁止。音声に無い単語を足さないこと）。\n"
             "- 単語の順序は変えないでください。\n"
-            "- 出力は JSON で operations 配列のみを返してください。\n\n"
+            "- 出力は JSON の operations 配列のみ。説明文・コードフェンスは禁止。\n\n"
             f"入力テキスト:\n{raw_text}\n\n"
             f"単語リスト（index:word）:\n{indexed}\n\n"
-            '出力フォーマット例:\n{"operations":[{"type":"replace","start_idx":10,"end_idx":11,"text":"カレーライス"},{"type":"delete","start_idx":25,"end_idx":25}]}\n'
-            "追加の説明は不要です。"
+            "出力フォーマット例:\n"
+            '{\n'
+            '  "operations": [\n'
+            '    {"type": "replace", "start_idx": 10, "end_idx": 11, "text": "カレーライス"},\n'
+            '    {"type": "delete", "start_idx": 25, "end_idx": 25}\n'
+            '  ]\n'
+            '}\n'
+            "追加の説明・前後文字列・コードフェンスは一切不要です。"
         )
 
     def _build_pass2_prompt(self, words: Sequence[WordTimestamp], *, max_chars: float) -> str:
@@ -445,7 +451,13 @@ class TwoPassFormatter:
             "# Input\n"
             f"単語リスト（index:word）:\n{indexed}\n\n"
             "# Output\n"
-            '以下のJSONだけを返してください:\n{"lines":[{"from":0,"to":10,"text":"私は大学の12月ぐらい"},{"from":11,"to":25,"text":"政治家になろうと決めていて"}]}\n'
+            "以下のJSONだけを返してください（説明・コードフェンス禁止）。例:\n"
+            '{\n'
+            '  "lines": [\n'
+            '    {"from": 0, "to": 10, "text": "私は大学の12月ぐらい"},\n'
+            '    {"from": 11, "to": 25, "text": "政治家になろうと決めていて"}\n'
+            '  ]\n'
+            '}\n'
         )
 
     def _build_pass3_prompt(self, lines: Sequence[LineRange], words: Sequence[WordTimestamp], issues) -> str:
