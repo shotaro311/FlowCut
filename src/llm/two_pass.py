@@ -487,7 +487,16 @@ class TwoPassFormatter:
             f"単語リスト（index:word）:\n{indexed}\n\n"
             f"現在の行分割:\n{current_lines}\n\n"
             "# Output\n"
-            '修正後の行分割（JSONのみ）:\n{"lines":[{"from":0,"to":10,"text":"..."}]}\n'
+            "以下のJSONのみを返してください。説明文・コードフェンス・前後のテキストは禁止です。\n"
+            '{\n'
+            '  "lines": [\n'
+            '    {"from": 0, "to": 11, "text": "私は大学の時の12月ぐらいかな"},\n'
+            '    {"from": 12, "to": 18, "text": "4年生の12月には"},\n'
+            '    {"from": 19, "to": 28, "text": "政治家になろうという腹を決めていて"},\n'
+            '    {"from": 29, "to": 33, "text": "1月ぐらいから"},\n'
+            '    {"from": 34, "to": 45, "text": "司法試験予備校に申し込んで"}\n'
+            '  ]\n'
+            '}\n'
         )
 
 
