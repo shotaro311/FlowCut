@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 from src.alignment import align_to_srt
+from src.llm.two_pass import TwoPassFormatter, TwoPassResult
 from src.llm.formatter import (
     FormatterError,
     FormatterRequest,
@@ -51,6 +52,7 @@ class PocRunOptions:
     llm_temperature: float | None = None
     llm_timeout: float | None = None
     align_kwargs: Dict[str, Any] = field(default_factory=dict)
+    llm_two_pass: bool = False
 
     def normalized_timestamp(self) -> str:
         return self.timestamp or datetime.now().strftime("%Y%m%dT%H%M%S")
@@ -121,27 +123,63 @@ def execute_poc_run(
 
             subtitle_path: Path | None = None
             if options.llm_provider:
-                formatted_lines = _format_blocks(
-                    blocks=blocks,
-                    formatter=formatter,
-                    llm_provider=options.llm_provider,
-                    rewrite=options.rewrite or False,
-                    run_id=run_id,
-                    llm_temperature=options.llm_temperature,
-                    llm_timeout=options.llm_timeout,
-                )
-                if formatted_lines:
-                    subtitle_path = options.subtitle_dir / f"{run_id}.srt"
-                    subtitle_text = align_to_srt(
-                        formatted_lines,
-                        result.words,
-                        **(options.align_kwargs or {}),
+                subtitle_path = options.subtitle_dir / f"{run_id}.srt"
+                subtitle_text: str | None = None
+                if options.llm_two_pass:
+                    two_pass = TwoPassFormatter(
+                        llm_provider=options.llm_provider,
+                        temperature=options.llm_temperature,
+                        timeout=options.llm_timeout,
                     )
+                    try:
+                        tp_result: TwoPassResult | None = two_pass.run(
+                            text=result.text,
+                            words=result.words or [],
+                            max_chars=17.0,
+                        )
+                        if tp_result:
+                            subtitle_text = tp_result.srt_text
+                    except FormatterError as exc:
+                        logger.warning("二段階LLM整形に失敗しました: %s", exc)
+                        # フォールバックとして従来の1パス整形を試みる
+                        formatted_lines = _format_blocks(
+                            blocks=blocks,
+                            formatter=formatter,
+                            llm_provider=options.llm_provider,
+                            rewrite=options.rewrite or False,
+                            run_id=run_id,
+                            llm_temperature=options.llm_temperature,
+                            llm_timeout=options.llm_timeout,
+                        )
+                        if formatted_lines:
+                            subtitle_text = align_to_srt(
+                                formatted_lines,
+                                result.words,
+                                **(options.align_kwargs or {}),
+                            )
+                else:
+                    formatted_lines = _format_blocks(
+                        blocks=blocks,
+                        formatter=formatter,
+                        llm_provider=options.llm_provider,
+                        rewrite=options.rewrite or False,
+                        run_id=run_id,
+                        llm_temperature=options.llm_temperature,
+                        llm_timeout=options.llm_timeout,
+                    )
+                    if formatted_lines:
+                        subtitle_text = align_to_srt(
+                            formatted_lines,
+                            result.words,
+                            **(options.align_kwargs or {}),
+                        )
+                    else:
+                        logger.warning("LLM整形結果が空のためSRTを生成しませんでした: %s", run_id)
+
+                if subtitle_text:
                     subtitle_path.parent.mkdir(parents=True, exist_ok=True)
                     subtitle_path.write_text(subtitle_text, encoding="utf-8")
                     logger.info("SRTを保存しました: %s", subtitle_path)
-                else:
-                    logger.warning("LLM整形結果が空のためSRTを生成しませんでした: %s", run_id)
 
             save_progress_snapshot(
                 run_id=run_id,
@@ -252,6 +290,7 @@ def prepare_resume_run(
             if base_options.rewrite is not None
             else option_meta.get("rewrite")
         ),
+        llm_two_pass=option_meta.get("llm_two_pass", base_options.llm_two_pass),
         llm_temperature=(
             base_options.llm_temperature
             if base_options.llm_temperature is not None
@@ -295,6 +334,7 @@ def _build_progress_metadata(
         "llm_temperature": options.llm_temperature,
         "llm_timeout": options.llm_timeout,
         "align_kwargs": options.align_kwargs,
+        "llm_two_pass": options.llm_two_pass,
     }
     if options.resume_source:
         metadata["resume_source"] = str(options.resume_source)

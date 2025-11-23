@@ -34,7 +34,10 @@ def post_json_request(
     Raises:
         FormatterError: リクエスト失敗時やJSONパースエラー時
     """
+    import logging
+    logger = logging.getLogger(__name__)
     try:
+        logger.debug(f"Sending POST request to {url} with timeout={timeout}")
         response = requests.post(
             url,
             headers=headers,
@@ -42,6 +45,8 @@ def post_json_request(
             json=payload,
             timeout=timeout,
         )
+        logger.debug(f"Received response from {url}: status={response.status_code}")
+
     except requests.RequestException as exc:
         raise FormatterError(f"{error_prefix}: {exc}") from exc
 

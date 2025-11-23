@@ -13,6 +13,7 @@ from .formatter import (
     register_provider,
 )
 from .prompts import PromptPayload, build_subtitle_prompt
+from .two_pass import TwoPassFormatter, TwoPassResult
 from . import providers as _providers  # noqa: F401  # side-effect: register providers
 
 __all__ = [
@@ -29,4 +30,6 @@ __all__ = [
     "register_provider",
     "PromptPayload",
     "build_subtitle_prompt",
+    "TwoPassFormatter",
+    "TwoPassResult",
 ]

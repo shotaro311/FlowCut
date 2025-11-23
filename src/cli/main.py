@@ -75,6 +75,7 @@ def run(
     align_thresholds: Optional[str] = typer.Option(None, '--align-thresholds', help='RapidFuzz閾値をカンマ区切りで指定 (例: 90,85,80)'),
     align_gap: Optional[float] = typer.Option(None, '--align-gap', help='行間の最小ギャップ秒・デフォルト0.1'),
     align_fallback: Optional[float] = typer.Option(None, '--align-fallback-padding', help='フォールバック時に前行終了へ足す秒数・デフォルト0.3'),
+    llm_two_pass: bool = typer.Option(False, '--llm-two-pass', help='LLM二段階モード（パス1: 置換/削除、パス2: 17文字分割）を使用する'),
     simulate: bool = typer.Option(True, '--simulate/--no-simulate', help='シミュレーションモードを切り替える'),
     verbose: bool = typer.Option(False, '--verbose', help='詳細ログを有効化'),
 ) -> None:
@@ -105,6 +106,7 @@ def run(
         llm_temperature=llm_temperature,
         llm_timeout=llm_timeout,
         align_kwargs=align_kwargs,
+        llm_two_pass=llm_two_pass,
     )
     if resume:
         try:
