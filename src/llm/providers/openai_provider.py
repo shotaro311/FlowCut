@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, Dict
+import logging
 
 import requests
 
@@ -19,6 +20,7 @@ class OpenAIChatProvider(BaseLLMProvider):
     display_name = "OpenAI Chat Completions"
 
     def format(self, prompt: PromptPayload, request: FormatterRequest) -> str:
+        logger = logging.getLogger(__name__)
         settings = get_settings().llm
         if not settings.openai_api_key:
             raise FormatterError("OPENAI_API_KEY が未設定です")
@@ -48,4 +50,13 @@ class OpenAIChatProvider(BaseLLMProvider):
             content = data["choices"][0]["message"]["content"].strip()
         except (KeyError, IndexError) as exc:  # pragma: no cover - defensive
             raise FormatterError(f"OpenAI API 応答を解釈できません: {json.dumps(data)}") from exc
+
+        usage = data.get("usage", {})
+        logger.info(
+            "llm_usage provider=openai model=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s",
+            model,
+            usage.get("prompt_tokens"),
+            usage.get("completion_tokens"),
+            usage.get("total_tokens"),
+        )
         return content

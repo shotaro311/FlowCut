@@ -26,7 +26,7 @@ class LLMSettings:
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-3-5-sonnet-20241022"
     anthropic_api_base: str = "https://api.anthropic.com/v1"
-    request_timeout: float = 200.0
+    request_timeout: float = 500.0
     # Per-pass model overrides (providerに依存しない自由入力)
     pass1_model: str = "gemini-3-pro-preview"
     pass2_model: str = "gemini-3-pro-preview"
@@ -59,7 +59,7 @@ def get_settings() -> AppSettings:
         anthropic_api_key=_env("ANTHROPIC_API_KEY"),
         anthropic_model=_env("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022"),
         anthropic_api_base=_env("ANTHROPIC_API_BASE", "https://api.anthropic.com/v1"),
-        request_timeout=float(_env("LLM_REQUEST_TIMEOUT", "200.0")),
+        request_timeout=float(_env("LLM_REQUEST_TIMEOUT", "500.0")),
         pass1_model=_env("LLM_PASS1_MODEL", "gemini-3-pro-preview"),
         pass2_model=_env("LLM_PASS2_MODEL", "gemini-3-pro-preview"),
         pass3_model=_env("LLM_PASS3_MODEL", "gemini-2.5-flash"),

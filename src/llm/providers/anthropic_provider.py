@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, Dict, List
+import logging
 
 import requests
 
@@ -38,6 +39,7 @@ class AnthropicClaudeProvider(BaseLLMProvider):
     display_name = "Anthropic Claude Messages"
 
     def format(self, prompt: PromptPayload, request: FormatterRequest) -> str:
+        logger = logging.getLogger(__name__)
         settings = get_settings().llm
         if not settings.anthropic_api_key:
             raise FormatterError("ANTHROPIC_API_KEY が未設定です")
@@ -89,6 +91,13 @@ class AnthropicClaudeProvider(BaseLLMProvider):
 
         texts = _extract_text_blocks(data.get("content"))
         if texts:
+            usage = data.get("usage", {})
+            logger.info(
+                "llm_usage provider=anthropic model=%s input_tokens=%s output_tokens=%s",
+                model,
+                usage.get("input_tokens"),
+                usage.get("output_tokens"),
+            )
             return "\n".join(texts)
         # 一部のモック/旧仕様では top-level text がある場合がある
         if isinstance(data.get("text"), str) and data["text"].strip():

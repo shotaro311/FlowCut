@@ -46,7 +46,6 @@ def create_progress(tmp_path: Path, *, status: str = "failed") -> Path:
                 "rewrite": True,
                 "llm_temperature": 0.7,
                 "llm_timeout": 20.0,
-                "align_kwargs": {"fuzzy_thresholds": [92, 85], "gap_seconds": 0.2, "fallback_padding": 0.4},
             },
         },
     )
@@ -71,7 +70,6 @@ def test_prepare_resume_run_uses_metadata(tmp_path):
     assert resume_options.rewrite is True
     assert resume_options.llm_temperature == 0.7
     assert resume_options.llm_timeout == 20.0
-    assert resume_options.align_kwargs == {"fuzzy_thresholds": [92, 85], "gap_seconds": 0.2, "fallback_padding": 0.4}
 
 
 def test_prepare_resume_run_rejects_completed(tmp_path):

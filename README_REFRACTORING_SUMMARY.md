@@ -1,12 +1,12 @@
-# リファクタリングまとめ（2025-11-21 00:45 JST）
+# リファクタリングまとめ（2025-11-23 18:50 JST）
 
-- LLMフォーマッター: バックオフ付きリトライ（1s→3s→5s）を実装し、`max_retries` 設定を実際に活用。
-- LLM呼び出し: temperature / timeout を CLI → パイプライン → プロバイダーまで伝播。
-- Whisperランナー: OpenAI本実装を共通関数化し、kotoba/mlx は当面フォールバックで動作させる方式へ統合。
-- ハウスキーピング: `python -m src.cli.main cleanup` / `scripts/cleanup_temp.py` で temp/log の古いファイルを一括削除。
-- テスト: 40→42件まで拡充（リトライ・フォールバック・クリーンアップ）。
+- LLM整形フローを two-pass 固定に統一（旧1パス + [WORD:]アンカー + RapidFuzzアラインを撤去）。
+- CLIオプションを簡素化：`--llm-two-pass` / `--align-*` を廃止、two-passのみ利用。
+- LLMリクエストタイムアウトをデフォルト 500 秒に延長（`LLM_REQUEST_TIMEOUT` / `--llm-timeout` で上書き可）。
+- ドキュメント更新：`docs/requirement.md`・`docs/specs/llm_two_pass_workflow.md`・`docs/runbook.md` を two-pass 前提に同期。
+- 依存整理：rapidfuzz を削除。アライン関連テストを整理し two-pass 用テストを通過。
 
 今後の優先リファクタリング候補（最新進捗考慮）
-1. kotoba/mlx ネイティブ実装を追加し、フォールバック依存を解消。
-2. LLM整形→アライン→SRT を1コマンドで実データ検証するE2Eスモークを追加。
-3. アライン閾値・ギャップをCLIから調整できる現状を活用し、実データで適正値をチューニング。
+1. README / リリースノートに two-pass固定と旧オプション廃止を明記（利用者周知）。
+2. 実サンプルでのワンショットE2E確認（必要なら）と SRT 実出力の最終確認。
+3. kotoba/mlx ネイティブの安定化と CLI ヘルプの簡素化（残件があれば）。

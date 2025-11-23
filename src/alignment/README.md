@@ -1,6 +1,4 @@
 # alignment
 
-`[WORD: ]` アンカー付き行と word-level タイムスタンプを突き合わせ、字幕行ごとの開始・終了時刻を決めるモジュールです。
-- `timestamp.py`: RapidFuzz によるファジーマッチとフォールバックを実装し、警告は `logs/alignment_warnings.json` に記録。
-- `srt.py`: `AlignedLine` から SRT テキストを生成。`align_to_srt()` でアラインとSRT出力を一気通貫に実行できます。
-- LLM整形後の行を CLI / パイプラインから再利用できるように設計しています。
+TwoPassFormatter で生成した `SubtitleSegment` を SRT へ整形する薄いユーティリティです。
+- `srt.py`: `SubtitleSegment` と `segments_to_srt()` のみを提供（アライン処理は two-pass 内部で完結）。

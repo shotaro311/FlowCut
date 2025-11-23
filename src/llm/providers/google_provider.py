@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, Dict
+import logging
 
 import requests
 
@@ -19,6 +20,7 @@ class GoogleGeminiProvider(BaseLLMProvider):
     display_name = "Google Gemini"
 
     def format(self, prompt: PromptPayload, request: FormatterRequest) -> str:
+        logger = logging.getLogger(__name__)
         settings = get_settings().llm
         if not settings.google_api_key:
             raise FormatterError("GOOGLE_API_KEY が未設定です")
@@ -52,4 +54,13 @@ class GoogleGeminiProvider(BaseLLMProvider):
             content = candidates[0]["content"]["parts"][0]["text"].strip()
         except (KeyError, IndexError) as exc:  # pragma: no cover - defensive
             raise FormatterError(f"Google Gemini API 応答を解釈できません: {json.dumps(data)}") from exc
+
+        usage = data.get("usageMetadata", {})
+        logger.info(
+            "llm_usage provider=google model=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s",
+            model,
+            usage.get("promptTokenCount"),
+            usage.get("candidatesTokenCount"),
+            usage.get("totalTokenCount"),
+        )
         return content

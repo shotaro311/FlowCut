@@ -19,9 +19,14 @@ def test_execute_poc_run_generates_srt_with_dummy_provider(tmp_path):
     class DummyProvider(fmt.BaseLLMProvider):
         slug = "dummy"
         display_name = "Dummy Provider"
+        def __init__(self):
+            self.calls = 0
 
         def format(self, prompt, request):
-            return "こんにちは[WORD: こんにちは]\n世界[WORD: 世界]"
+            # Pass1: operations / Pass2+: lines
+            if "operations" in prompt.user_prompt:
+                return '{"operations": []}'
+            return '{"lines":[{"from":0,"to":0,"text":"こんにちは世界"}]}'
 
     fmt.register_provider(DummyProvider)
 
@@ -39,7 +44,7 @@ def test_execute_poc_run_generates_srt_with_dummy_provider(tmp_path):
     )
 
     try:
-        execute_poc_run([audio], ["openai"], options, formatter=fmt.LLMFormatter(strict_validation=False))
+        execute_poc_run([audio], ["openai"], options)
     finally:
         fmt._PROVIDER_REGISTRY.clear()
         fmt._PROVIDER_REGISTRY.update(registry_backup)

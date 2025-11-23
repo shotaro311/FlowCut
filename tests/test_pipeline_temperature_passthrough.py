@@ -20,10 +20,14 @@ def test_execute_poc_run_passes_temperature_to_formatter(tmp_path):
     class DummyProvider(fmt.BaseLLMProvider):
         slug = "tempcheck"
         display_name = "TempCheck"
+        def __init__(self):
+            self.calls = 0
 
         def format(self, prompt, request):
             captured["temperature"] = request.temperature
-            return "hello[WORD: hello]"
+            if "operations" in prompt.user_prompt:
+                return '{"operations": []}'
+            return '{"lines":[{"from":0,"to":0,"text":"hello"}]}'
 
     fmt.register_provider(DummyProvider)
 
@@ -42,7 +46,7 @@ def test_execute_poc_run_passes_temperature_to_formatter(tmp_path):
     )
 
     try:
-        execute_poc_run([audio], ["openai"], options, formatter=fmt.LLMFormatter(strict_validation=False))
+        execute_poc_run([audio], ["openai"], options)
     finally:
         fmt._PROVIDER_REGISTRY.clear()
         fmt._PROVIDER_REGISTRY.update(registry_backup)

@@ -41,7 +41,6 @@ def _create_resume_file(base_dir: Path) -> Path:
                 "rewrite": False,
                 "llm_temperature": None,
                 "llm_timeout": None,
-                "align_kwargs": {},
             },
         },
     )

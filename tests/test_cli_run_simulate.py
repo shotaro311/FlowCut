@@ -19,9 +19,15 @@ runner = CliRunner()
 class DummyProvider(fmt.BaseLLMProvider):
     slug = "dummy"
     display_name = "Dummy Provider"
+    def __init__(self):
+        self.calls = 0
 
     def format(self, prompt, request):
-        return "こんにちは[WORD: こんにちは]\n世界[WORD: 世界]"
+        # Pass1: operations / Pass2+: lines
+        if "operations" in prompt.user_prompt:
+            return '{"operations": []}'
+        # Pass2 / Pass3 どちらでも同じレスポンスでOK
+        return '{"lines":[{"from":0,"to":0,"text":"こんにちは世界"}]}'
 
 
 def test_cli_run_simulate_generates_srt(monkeypatch, tmp_path: Path):
@@ -50,8 +56,6 @@ def test_cli_run_simulate_generates_srt(monkeypatch, tmp_path: Path):
             str(tmp_path / "out"),
             "--progress-dir",
             str(tmp_path / "prog"),
-            "--align-gap",
-            "0.2",
         ],
     )
     assert result.exit_code == 0, result.output

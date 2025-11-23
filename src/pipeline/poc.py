@@ -7,16 +7,10 @@ import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
+import time
 
-from src.alignment import align_to_srt
 from src.llm.two_pass import TwoPassFormatter, TwoPassResult
-from src.llm.formatter import (
-    FormatterError,
-    FormatterRequest,
-    FormatValidationError,
-    LLMFormatter,
-    FormattedLine,
-)
+from src.llm.formatter import FormatterError
 from src.transcribe import (
     TranscriptionConfig,
     TranscriptionResult,
@@ -51,8 +45,6 @@ class PocRunOptions:
     rewrite: bool | None = None
     llm_temperature: float | None = None
     llm_timeout: float | None = None
-    align_kwargs: Dict[str, Any] = field(default_factory=dict)
-    llm_two_pass: bool = False
 
     def normalized_timestamp(self) -> str:
         return self.timestamp or datetime.now().strftime("%Y%m%dT%H%M%S")
@@ -90,8 +82,6 @@ def execute_poc_run(
     audio_files: Sequence[Path],
     models: Sequence[str],
     options: PocRunOptions,
-    *,
-    formatter: LLMFormatter | None = None,
 ) -> List[Path]:
     """Execute transcription for the provided audio files and models."""
     if not audio_files:
@@ -101,8 +91,6 @@ def execute_poc_run(
 
     timestamp = options.normalized_timestamp()
     saved_paths: List[Path] = []
-    # LLM整形は本番API応答のゆらぎを許容するため、デフォルトは strict=False にして例外で止まらないようにする。
-    formatter = formatter or LLMFormatter(strict_validation=False)
 
     for slug in models:
         runner = get_runner(slug)
@@ -115,7 +103,15 @@ def execute_poc_run(
         logger.info("=== %s (%s) ===", slug, runner.display_name)
         runner.prepare(config)
         for audio_path in audio_files:
+            t_transcribe_start = time.perf_counter()
             result = runner.transcribe(audio_path, config)
+            t_transcribe_end = time.perf_counter()
+            logger.info(
+                "transcription_done runner=%s audio=%s duration_sec=%.3f",
+                slug,
+                audio_path.name,
+                t_transcribe_end - t_transcribe_start,
+            )
             blocks = build_single_block(result)
             run_id = f"{audio_path.stem}_{slug}_{timestamp}"
             output_path = options.output_dir / f"{run_id}.json"
@@ -125,12 +121,15 @@ def execute_poc_run(
             if options.llm_provider:
                 subtitle_path = options.subtitle_dir / f"{run_id}.srt"
                 subtitle_text: str | None = None
-                if options.llm_two_pass:
+                if not result.words:
+                    logger.warning("wordタイムスタンプが空のためSRT生成をスキップします: %s", run_id)
+                else:
                     two_pass = TwoPassFormatter(
                         llm_provider=options.llm_provider,
                         temperature=options.llm_temperature,
                         timeout=options.llm_timeout,
                     )
+                    t_llm_start = time.perf_counter()
                     try:
                         tp_result: TwoPassResult | None = two_pass.run(
                             text=result.text,
@@ -141,40 +140,13 @@ def execute_poc_run(
                             subtitle_text = tp_result.srt_text
                     except FormatterError as exc:
                         logger.warning("二段階LLM整形に失敗しました: %s", exc)
-                        # フォールバックとして従来の1パス整形を試みる
-                        formatted_lines = _format_blocks(
-                            blocks=blocks,
-                            formatter=formatter,
-                            llm_provider=options.llm_provider,
-                            rewrite=options.rewrite or False,
-                            run_id=run_id,
-                            llm_temperature=options.llm_temperature,
-                            llm_timeout=options.llm_timeout,
-                        )
-                        if formatted_lines:
-                            subtitle_text = align_to_srt(
-                                formatted_lines,
-                                result.words,
-                                **(options.align_kwargs or {}),
-                            )
-                else:
-                    formatted_lines = _format_blocks(
-                        blocks=blocks,
-                        formatter=formatter,
-                        llm_provider=options.llm_provider,
-                        rewrite=options.rewrite or False,
-                        run_id=run_id,
-                        llm_temperature=options.llm_temperature,
-                        llm_timeout=options.llm_timeout,
+                    t_llm_end = time.perf_counter()
+                    logger.info(
+                        "llm_two_pass_done provider=%s audio=%s duration_sec=%.3f",
+                        options.llm_provider,
+                        audio_path.name,
+                        t_llm_end - t_llm_start,
                     )
-                    if formatted_lines:
-                        subtitle_text = align_to_srt(
-                            formatted_lines,
-                            result.words,
-                            **(options.align_kwargs or {}),
-                        )
-                    else:
-                        logger.warning("LLM整形結果が空のためSRTを生成しませんでした: %s", run_id)
 
                 if subtitle_text:
                     subtitle_path.parent.mkdir(parents=True, exist_ok=True)
@@ -290,7 +262,6 @@ def prepare_resume_run(
             if base_options.rewrite is not None
             else option_meta.get("rewrite")
         ),
-        llm_two_pass=option_meta.get("llm_two_pass", base_options.llm_two_pass),
         llm_temperature=(
             base_options.llm_temperature
             if base_options.llm_temperature is not None
@@ -298,9 +269,6 @@ def prepare_resume_run(
         ),
         llm_timeout=(
             base_options.llm_timeout if base_options.llm_timeout is not None else option_meta.get("llm_timeout")
-        ),
-        align_kwargs=(
-            base_options.align_kwargs if base_options.align_kwargs else option_meta.get("align_kwargs") or {}
         ),
     )
     return record, audio_files, [record.model], resume_options
@@ -333,46 +301,12 @@ def _build_progress_metadata(
         "rewrite": options.rewrite,
         "llm_temperature": options.llm_temperature,
         "llm_timeout": options.llm_timeout,
-        "align_kwargs": options.align_kwargs,
-        "llm_two_pass": options.llm_two_pass,
     }
     if options.resume_source:
         metadata["resume_source"] = str(options.resume_source)
     if subtitle_path:
         metadata["subtitle_path"] = str(subtitle_path)
     return metadata
-
-
-def _format_blocks(
-    *,
-    blocks: Sequence[dict],
-    formatter: LLMFormatter,
-    llm_provider: str,
-    rewrite: bool,
-    run_id: str,
-    llm_temperature: float | None,
-    llm_timeout: float | None,
-) -> List[FormattedLine]:
-    formatted: List[FormattedLine] = []
-    for idx, block in enumerate(blocks, start=1):
-        request = FormatterRequest(
-            block_text=str(block.get("text", "")),
-            provider=llm_provider,
-            rewrite=rewrite,
-            temperature=llm_temperature,
-            timeout=llm_timeout,
-            metadata={"run_id": run_id, "block_index": idx},
-        )
-        try:
-            result = formatter.format_block(request)
-        except FormatValidationError as exc:
-            logger.warning("LLM出力にバリデーションエラー (block=%s): %s", idx, exc)
-            continue
-        except FormatterError as exc:
-            logger.error("LLM整形に失敗しました (block=%s): %s", idx, exc)
-            continue
-        formatted.extend(result.lines)
-    return formatted
 
 
 __all__ = [

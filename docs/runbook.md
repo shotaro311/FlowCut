@@ -13,14 +13,13 @@
 
 ## よく使うコマンド
 - モデル一覧: `python -m src.cli.main models`
-- PoC実行（シミュレーション音声+SRT生成、LLM付き）:
+- PoC実行（シミュレーション音声+LLM整形=two-pass固定）:
   ```bash
   python -m src.cli.main run samples/sample_audio.m4a \
-    --llm openai --rewrite \
-    --llm-timeout 60 \
-    --align-thresholds 92,85,80 --align-gap 0.15 --align-fallback-padding 0.4
+    --llm google \
+    --llm-timeout 500
   ```
-  *実課金に注意。シミュレーションで十分なら `--llm` を省略してください。*
+  *実課金に注意。整形不要なら `--llm` を省略し、文字起こしJSONのみ保存します。*
 
 - 中断再開: `python -m src.cli.main run --resume temp/progress/<run>.json`
 
@@ -31,16 +30,15 @@
 
 ## 主要オプション速見表
 - `--llm` / `--rewrite` / `--llm-temperature` / `--llm-timeout`
-- アライン調整: `--align-thresholds 92,85,80`, `--align-gap 0.1`, `--align-fallback-padding 0.3`
 - 出力・進捗: `--output-dir`, `--progress-dir`, `--subtitle-dir`（PocRunOptionsで統一）
 - 一括掃除: `cleanup` サブコマンドまたは `scripts/cleanup_temp.py`
 
 ## 運用メモ
-- kotoba / mlx ランナーは現状 OpenAI Whisper へフォールバック実行。ネイティブ実装は今後対応。
-- アライン調整: `--align-thresholds`（カンマ区切り）、`--align-gap`、`--align-fallback-padding` で調整可能。デフォルトは `90,85,80 / 0.1 / 0.3`。
-- API安定性: LLM呼び出しは 1→3→5 秒のバックオフ付きリトライ、`--llm-timeout` でリクエストタイムアウトを上書き可能。
+- Whisperランナー: kotoba / mlx / openai を選択可能（デフォルトは MLX）。フォールバックなしのtwo-pass専用フロー。
+- アライン調整オプション（RapidFuzz）は撤去済み。SRTは two-pass の `lines` 出力をワードインデックス直結で生成。
+- API安定性: LLM呼び出しは 1→3→5 秒のバックオフ付きリトライ。デフォルトタイムアウトは 500 秒（`LLM_REQUEST_TIMEOUT` / `--llm-timeout` で上書き可）。
 
 ## 次に触るときのチェックリスト
 - `.env` のキーとモデル名が有効か（特に `OPENAI_WHISPER_MODEL`）。
 - `temp/` の肥大化は `cleanup` サブコマンドで掃除。
-- 長尺サンプルを受領したら、3モデルで実行して `reports/poc_whisper_metrics.csv` を更新。Warningログを見てアライン閾値を調整。
+- 長尺サンプルを受領したら、3モデルで実行して `reports/poc_whisper_metrics.csv` を更新。行分割は two-pass の出力を使用し、アライン調整は不要。
