@@ -4,7 +4,10 @@ from __future__ import annotations
 import json
 import logging
 import re
+import uuid
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 from typing import List, Sequence, Dict, Any, Iterable
 
 from src.config import get_settings
@@ -13,6 +16,7 @@ from src.llm.prompts import PromptPayload
 from src.transcribe.base import WordTimestamp
 
 logger = logging.getLogger(__name__)
+RAW_LOG_DIR = Path("logs/llm_raw")
 
 
 @dataclass(slots=True)
@@ -54,6 +58,18 @@ def _extract_json(text: str) -> Any:
     if start > 0:
         text = text[start:]
     return json.loads(text)
+
+
+def _log_raw_response(pass_label: str, raw: str) -> None:
+    """Persist raw LLM response for debugging."""
+    try:
+        RAW_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+        fname = RAW_LOG_DIR / f"{pass_label}_{ts}_{uuid.uuid4().hex[:8]}.txt"
+        fname.write_text(raw, encoding="utf-8")
+        logger.debug("Saved raw LLM response for %s to %s (len=%d)", pass_label, fname, len(raw))
+    except Exception as exc:  # pragma: no cover - ログ失敗は致命的でない
+        logger.warning("Failed to save raw LLM response for %s: %s", pass_label, exc)
 
 
 def _parse_operations(raw: Any) -> List[EditOperation]:
@@ -181,6 +197,7 @@ class TwoPassFormatter:
         pass1_prompt = self._build_pass1_prompt(text, words)
         logger.debug("Calling LLM for Pass 1. Prompt length: %d", len(pass1_prompt))
         raw1 = self._call_llm(pass1_prompt, model_override=self.pass1_model)
+        _log_raw_response("pass1", raw1)
         parsed1 = _safe_trim_json_response(raw1)
         ops = _parse_operations(parsed1)
         updated_words = _apply_operations(words, ops) if ops else list(words)
@@ -194,6 +211,7 @@ class TwoPassFormatter:
         pass2_prompt = self._build_pass2_prompt(updated_words, max_chars=max_chars)
         logger.debug("Calling LLM for Pass 2. Prompt length: %d", len(pass2_prompt))
         raw2 = self._call_llm(pass2_prompt, model_override=self.pass2_model)
+        _log_raw_response("pass2", raw2)
         parsed2 = _safe_trim_json_response(raw2)
         lines = _parse_lines(parsed2)
         if not lines:
@@ -212,6 +230,7 @@ class TwoPassFormatter:
         pass3_prompt = self._build_pass3_prompt(lines, updated_words, issues)
         logger.debug("Calling LLM for Pass 3. Prompt length: %d", len(pass3_prompt))
         raw3 = self._call_llm(pass3_prompt, model_override=self.pass3_model)
+        _log_raw_response("pass3", raw3)
         parsed3 = _safe_trim_json_response(raw3)
         pass3_lines = _parse_lines(parsed3)
         if pass3_lines:
