@@ -31,7 +31,7 @@
 ### 文章整形（LLM API）
 以下のプロバイダーから選択可能。**Plan推奨デフォルトは Google (gemini-1.5-flash)**。  
 ※ CLIでは `--llm` を明示指定しない限り整形とSRT生成は実行されず、文字起こしJSONのみ保存される。  
-※ Blocking（事前分割）は無効化し、全文をLLMに渡して意味的改行のみをLLM側で行う。
+※ **二段階LLMワークフロー（Two-Pass）** を採用し、全文をLLMに渡して意味的改行のみをLLM側で行う。
 
 *   **Google** (gemini-1.5-pro / gemini-1.5-flash) ←推奨
 *   **OpenAI** (gpt-4o, gpt-4o-mini など)
@@ -94,8 +94,13 @@ ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
     *   単語レベルのタイムスタンプリスト（JSON形式で保持）
 
 ### Step 2: 文脈理解と整形 (Cloud API)
-*   Whisper全文をそのまま選択したLLM API（OpenAI/Google/Anthropic）へ送信し、意味的な改行と整形を行う（Blockingなし）。
-*   **プロンプトの役割:**
+*   **(現状)** Whisper全文を選択したLLM APIへ送信し、改行・整形を行う（Blockingなし）。
+*   **(採用方針：二段階LLMワークフロー)** `docs/specs/llm_two_pass_workflow.md` 参照  
+    - **パス1 (Text Cleaning):** 置換・削除のみ（挿入禁止）で誤字・フィラー除去。単語インデックス指定のJSONを返す。  
+    - **パス2 (Line Splitting):** 17文字分割のみを決める。行範囲をインデックスで返す。  
+    - **時間計算:** ローカルで行い、Whisperのwordタイムスタンプを維持する（尺伸び防止）。  
+    - **タイムスタンプ補正 (Clamping):** LLMのインデックス指定ミスによる時間の巻き戻りを検知し、強制的に時系列順に補正する。
+*   **プロンプトの役割（現行1パス）:**
     1.  フィラー（えー、あー等）の削除。
     2.  **「1行17文字以内」**の制約を適用。
     3.  文法・意味構造解析による**「自然な改行位置」**の決定。
@@ -179,6 +184,13 @@ LLM出力からタグを分離し、表示テキストとアライメント情�
     *   LLMがフィラーを削除したり単語を変更すると、完全一致は困難
     *   Fuzzy Matchingの閾値調整が重要（まず90%で開始し、実データで調整）
 
+#### 3-3. タイムスタンプ補正 (Clamping)
+LLM（特にPass 2）が誤ったインデックスを指定し、SRTの開始時刻が前の行の終了時刻より過去になる「巻き戻り」現象を防ぐ。
+
+1.  **巻き戻り検知:** `current_start < last_end` の場合
+2.  **クランプ処理:** `current_start = last_end` に強制補正
+3.  **整合性維持:** `current_end < current_start` となった場合は `current_end = current_start + 0.1` で微調整
+
 ### Step 4: SRT出力
 *   決定したタイムコードとテキストをSRT形式でファイルに書き出す。
 *   **SRTフォーマット:**
@@ -201,6 +213,7 @@ python -m src.cli.main run <音声ファイル> [オプション]
 - `--models kotoba,mlx` : 使用するランナーをカンマ区切り指定。未指定なら **MLX large-v3のみ** 実行。
 - `--llm {google|openai|anthropic}` : LLM整形プロバイダー。**未指定なら整形・SRT出力を行わず、文字起こしJSONのみ保存**（Plan推奨は google）。
 - `--rewrite / --no-rewrite` : 語尾リライトを有効化（デフォルトNoneでプロバイダー既定に従う）。
+- `--llm-two-pass` : 二段階LLMモード（パス1: 置換/削除のみ、パス2: 17文字分割）を有効化。時間計算はローカル固定で尺伸びを防ぐ。
 - `--align-thresholds 90,85,80` : RapidFuzz類似度の閾値リスト。
 - `--align-gap 0.1` : 行間の最小ギャップ秒。
 - `--align-fallback-padding 0.3` : フォールバック時に前行へ足す秒数。
