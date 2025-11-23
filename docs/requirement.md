@@ -31,9 +31,14 @@
 ### 文章整形（LLM API）
 以下のプロバイダーから選択可能。**Plan推奨デフォルトは Google (gemini-1.5-flash)**。  
 ※ CLIでは `--llm` を明示指定しない限り整形とSRT生成は実行されず、文字起こしJSONのみ保存される。  
-※ **二段階LLMワークフロー（Two-Pass）** を採用し、全文をLLMに渡して意味的改行のみをLLM側で行う。
+※ **三段階LLMワークフロー（Three-Pass）** を採用し、全文をLLMに渡して意味的改行および最終検証を実施。
+  - **Pass 1**: テキストクリーニング（削除・置換のみ）
+  - **Pass 2**: 17文字行分割（自然な改行位置を決定）
+  - **Pass 3**: 品質検証（Python検出器 + LLM修正、問題なし時はスキップ）
 
-*   **Google** (gemini-1.5-pro / gemini-1.5-flash) ←推奨
+*   **Google** (gemini-3-pro-preview / gemini-2.5-flash) ←推奨
+    - **Pass 1/2 デフォルト**: gemini-3-pro-preview（高精度）
+    - **Pass 3 デフォルト**: gemini-2.5-flash（コスト削減）
 *   **OpenAI** (gpt-4o, gpt-4o-mini など)
 *   **Anthropic** (claude-3-5-sonnet-20241022, claude-3-5-haiku-20241022 など) ※MVP完了後に比較テスト予定
 
