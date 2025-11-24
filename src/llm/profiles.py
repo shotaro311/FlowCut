@@ -1,0 +1,70 @@
+"""LLMプロファイル（プロバイダーとパスごとのモデル構成）を管理するユーティリティ。"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, Any, Optional
+import json
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class LlmProfile:
+    name: str
+    provider: str
+    pass1_model: str | None = None
+    pass2_model: str | None = None
+    pass3_model: str | None = None
+    pass4_model: str | None = None
+
+
+_PROFILE_CACHE: Dict[str, LlmProfile] | None = None
+
+
+def _load_profiles() -> Dict[str, LlmProfile]:
+    """config/llm_profiles.json を読み込み、名前→LlmProfile の辞書に変換する。"""
+    global _PROFILE_CACHE
+    if _PROFILE_CACHE is not None:
+        return _PROFILE_CACHE
+
+    path = Path("config/llm_profiles.json")
+    if not path.exists():
+        logger.warning("LLMプロファイル定義が見つかりません: %s", path)
+        _PROFILE_CACHE = {}
+        return _PROFILE_CACHE
+
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        profiles_raw = raw.get("profiles", {})
+        if not isinstance(profiles_raw, dict):
+            raise ValueError("llm_profiles.json のフォーマットが不正です（profiles が dict ではありません）")
+        profiles: Dict[str, LlmProfile] = {}
+        for name, cfg in profiles_raw.items():
+            if not isinstance(cfg, dict) or "provider" not in cfg:
+                continue
+            profiles[name] = LlmProfile(
+                name=name,
+                provider=str(cfg["provider"]),
+                pass1_model=str(cfg.get("pass1_model")) if cfg.get("pass1_model") else None,
+                pass2_model=str(cfg.get("pass2_model")) if cfg.get("pass2_model") else None,
+                pass3_model=str(cfg.get("pass3_model")) if cfg.get("pass3_model") else None,
+                pass4_model=str(cfg.get("pass4_model")) if cfg.get("pass4_model") else None,
+            )
+        _PROFILE_CACHE = profiles
+        return profiles
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("LLMプロファイルの読み込みに失敗しました: %s", exc)
+        _PROFILE_CACHE = {}
+        return _PROFILE_CACHE
+
+
+def get_profile(name: str) -> Optional[LlmProfile]:
+    """指定された名前の LLM プロファイルを返す。存在しない場合は None。"""
+    profiles = _load_profiles()
+    return profiles.get(name)
+
+
+__all__ = ["LlmProfile", "get_profile"]
+

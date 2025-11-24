@@ -41,10 +41,10 @@ def detect_issues(
     """
     issues = []
     
-    # Rule 1: Short line (< 4 chars) ending with particle
+    # Rule 1: Short line (< 5 chars) ending with particle
     PARTICLES = ["を", "に", "で", "が", "は", "も", "から", "まで", "へ", "と"]
     for i, line in enumerate(lines):
-        if len(line.text) < 4 and line.text and line.text[-1] in PARTICLES:
+        if len(line.text) < 5 and line.text and line.text[-1] in PARTICLES:
             issues.append(ValidationIssue(
                 type="short_particle_line",
                 line_idx=i,

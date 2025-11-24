@@ -1,0 +1,59 @@
+{
+  "run_id": "sample_audio_mlx_20251124T1502",
+  "audio_file": "sample_audio.m4a",
+  "runner": "mlx",
+  "requested_at": "20251124T1502",
+  "total_elapsed_time": "22m 40.19s",
+  "audio_duration_time": "5m 3.04s",
+  "stage_timings_time": {
+    "transcribe_sec": "41.04s",
+    "llm_two_pass_sec": "21m 59.14s"
+  },
+  "llm_tokens": {
+    "pass1": {
+      "provider": "google",
+      "model": "gemini-2.5-flash",
+      "prompt_tokens": 8778,
+      "completion_tokens": 393,
+      "total_tokens": 35183,
+      "duration_time": "1m 41.78s",
+      "cost_input_usd": 0.0026333999999999997,
+      "cost_output_usd": 0.0009825,
+      "cost_total_usd": 0.0036159
+    },
+    "pass2": {
+      "provider": "google",
+      "model": "gemini-2.5-flash",
+      "prompt_tokens": 8669,
+      "completion_tokens": 2822,
+      "total_tokens": 43663,
+      "duration_time": "2m 30.77s",
+      "cost_input_usd": 0.0026006999999999996,
+      "cost_output_usd": 0.007055,
+      "cost_total_usd": 0.0096557
+    },
+    "pass3": {
+      "provider": "google",
+      "model": "gemini-2.5-pro",
+      "prompt_tokens": 10953,
+      "completion_tokens": 4247,
+      "total_tokens": 38123,
+      "duration_time": "3m 14.90s",
+      "cost_input_usd": 0.013691249999999999,
+      "cost_output_usd": 0.04247,
+      "cost_total_usd": 0.056161249999999996
+    },
+    "pass4": {
+      "provider": "google",
+      "model": "gemini-2.5-pro",
+      "prompt_tokens": 14741,
+      "completion_tokens": 3746,
+      "total_tokens": 119702,
+      "duration_time": "14m 31.67s",
+      "cost_input_usd": 0.01842625,
+      "cost_output_usd": 0.03746,
+      "cost_total_usd": 0.05588625
+    }
+  },
+  "run_total_cost_usd": 0.1253191
+}

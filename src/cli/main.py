@@ -17,6 +17,7 @@ from src.pipeline import (
     resolve_models,
 )
 from src.llm import available_providers as list_llm_providers
+from src.llm.profiles import get_profile
 
 app = typer.Typer(help="Flow Cut コマンドラインインターフェース")
 
@@ -54,6 +55,7 @@ def run(
     progress_dir: Path = typer.Option(Path('temp/progress'), help='進捗ファイルの出力ディレクトリ'),
     resume: Optional[Path] = typer.Option(None, help='再開する progress JSON のパス'),
     llm: Optional[str] = typer.Option(None, '--llm', help='使用するLLMプロバイダー（例: openai, google, anthropic）'),
+    llm_profile: Optional[str] = typer.Option(None, '--llm-profile', help='使用するLLMプロファイル名（config/llm_profiles.json を参照）'),
     llm_temperature: Optional[float] = typer.Option(None, '--llm-temperature', help='LLM整形時のtemperature。未指定ならプロバイダー既定値'),
     llm_timeout: Optional[float] = typer.Option(None, '--llm-timeout', help='LLM APIリクエストのタイムアウト秒数'),
     rewrite: Optional[bool] = typer.Option(None, '--rewrite/--no-rewrite', help='LLM整形で語尾リライトを有効化する'),
@@ -64,6 +66,21 @@ def run(
     _configure_logging(verbose)
 
     llm_provider = _normalize_llm_provider(llm)
+
+    # プロファイルが指定されていれば、パスごとのモデル構成をそこから取得する
+    pass1_model = pass2_model = pass3_model = pass4_model = None
+    if llm_profile is not None:
+        profile = get_profile(llm_profile)
+        if profile is None:
+            raise typer.BadParameter(f"指定されたLLMプロファイルが見つかりません: {llm_profile}")
+        # プロバイダーが明示されていない場合のみ、プロファイル側の provider を採用
+        if llm_provider is None:
+            llm_provider = profile.provider
+        pass1_model = profile.pass1_model
+        pass2_model = profile.pass2_model
+        pass3_model = profile.pass3_model
+        pass4_model = profile.pass4_model
+
     if llm_provider is None:
         typer.echo("[info] --llm 未指定のため整形とSRT出力をスキップし、文字起こしJSONのみ保存します", err=True)
 
@@ -75,6 +92,11 @@ def run(
         simulate=simulate,
         verbose=verbose,
         llm_provider=llm_provider,
+        llm_profile=llm_profile,
+        llm_pass1_model=pass1_model,
+        llm_pass2_model=pass2_model,
+        llm_pass3_model=pass3_model,
+        llm_pass4_model=pass4_model,
         rewrite=rewrite,
         llm_temperature=llm_temperature,
         llm_timeout=llm_timeout,

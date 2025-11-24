@@ -30,7 +30,7 @@
 
 ### 文章整形（LLM API）
 以下のプロバイダーから選択可能。**Plan推奨デフォルトは Google (gemini-3-pro-preview = Gemini 3.0 Pro)**、ただし **Pass3 のみ gemini-2.5-flash** でコスト最適化。  
-環境変数 `LLM_PASS1_MODEL` / `LLM_PASS2_MODEL` / `LLM_PASS3_MODEL` で各パスのモデルを自由に上書き可能（例: `gpt-4o`, `claude-3-5-sonnet-20241022`）。プロバイダー指定は `--llm` で行い、モデル名は文字列そのまま渡せる。
+環境変数 `LLM_PASS1_MODEL` / `LLM_PASS2_MODEL` / `LLM_PASS3_MODEL` で各パスのモデルを自由に上書き可能（例: `gpt-5.1`, `claude-sonnet-4-20250514`）。プロバイダー指定は `--llm` で行い、モデル名は文字列そのまま渡せる。
 ※ CLIでは `--llm` を明示指定しない限り整形とSRT生成は実行されず、文字起こしJSONのみ保存される。  
 ※ **三段階LLMワークフロー（Three-Pass）** を採用し、全文をLLMに渡して意味的改行および最終検証を実施。
   - **Pass 1**: テキストクリーニング（削除・置換のみ）
@@ -41,8 +41,8 @@
 *   **Google** (gemini-3-pro-preview / gemini-2.5-flash) ←推奨
     - **Pass 1/2 デフォルト**: gemini-3-pro-preview（高精度）
     - **Pass 3 デフォルト**: gemini-2.5-flash（コスト削減）
-*   **OpenAI** (gpt-4o, gpt-4o-mini など)
-*   **Anthropic** (claude-3-5-sonnet-20241022, claude-3-5-haiku-20241022 など) ※MVP完了後に比較テスト予定
+*   **OpenAI** (gpt-5.1, gpt-5-mini など)
+*   **Anthropic** (claude-sonnet-4-20250514, claude-haiku-4-5 など) ※MVP完了後に比較テスト予定
 
 **設計方針:**
 *   各プロバイダーのAPIキーとモデル名を`.env`ファイルで管理
@@ -54,7 +54,7 @@
 ```env
 # OpenAI
 OPENAI_API_KEY=sk-proj-xxxxxxxxxxxxx
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-5-mini
 # Google Gemini
 GOOGLE_API_KEY=AIzaSyxxxxxxxxxxxxxxxxx
 GOOGLE_MODEL=gemini-3-pro-preview
@@ -62,9 +62,10 @@ GOOGLE_MODEL=gemini-3-pro-preview
 LLM_PASS1_MODEL=gemini-3-pro-preview
 LLM_PASS2_MODEL=gemini-3-pro-preview
 LLM_PASS3_MODEL=gemini-2.5-flash
+LLM_PASS4_MODEL=gemini-2.5-flash  # 省略時は LLM_PASS3_MODEL を再利用
 # Anthropic Claude
 ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxx
-ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
+ANTHROPIC_MODEL=claude-sonnet-4-20250514
 ```
 
 ### 言語・環境
@@ -110,7 +111,9 @@ ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
     - **パス1 (Text Cleaning):** 置換・削除のみ（挿入禁止）で誤字・フィラー除去。単語インデックス指定のJSONを返す。  
     - **パス2 (Line Splitting):** 17文字分割のみを決める。行範囲をインデックスで返す。  
     - **時間計算:** ローカルで行い、Whisperのwordタイムスタンプを維持する（尺伸び防止）。  
-    - **タイムスタンプ補正 (Clamping):** LLMのインデックス指定ミスによる時間の巻き戻りを検知し、強制的に時系列順に補正する。
+    - **タイムスタンプ補正 (Clamping):** LLMのインデックス指定ミスによる時間の巻き戻りを検知し、強制的に時系列順に補正する。  
+    - **最小行長/Pass3:** 行は原則5〜17文字。問題がなくても Pass3 で最終確認し、短行は統合する。  
+    - **Pass4（長さ違反行のみ再LLM）:** Pass3後に5文字未満/17文字超の行だけを再度LLMにかけ直す。出力が空/不正の場合は元行を維持し、Pass4 の段階で出力された `lines` をそのまま採用する（Pass4 後にローカルでの強制再分割は行わない）。
 *   **プロンプトの役割（two-pass）:**
     1.  パス1: 置換/削除のみを operations 配列(JSON)で返す。挿入禁止・順序を変えない。
     2.  パス2: 17文字以内の自然な行分割を `{"lines":[{"from":0,"to":10,"text":"..."}]}` 形式で返す。
@@ -128,7 +131,16 @@ ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
     *   処理済みブロックを `temp/progress_{timestamp}.json` に保存
     *   エラー終了時に具体的な再開手順を表示
     *   例: `python -m src.cli.main run input.wav --resume temp/progress_20250120_103000.json`
-*   **ログ記録:** `logs/processing.log` に処理状況を記録
+*   **ログ記録:**
+    *   `logs/processing.log` に処理状況を記録
+    *   LLM生応答は `logs/llm_raw/` に **1 run（音声×モデル）につき1ファイル** として集約保存（Pass1〜Pass4の生JSONをパスごとセクションにまとめる）
+    *   LLM使用量・時間と概算コストは `logs/metrics/{音声ファイル名}_{日付}_{run_id}_metrics.json` に保存し、以下をJSONで持つ:
+        *   全体の経過時間（人間が読みやすい形式の `total_elapsed_time`。例: `8m 22.35s`）
+        *   transcribe / two-pass 各工程の所要時間（`stage_timings_time`。例: `"transcribe_sec": "1m 28.12s"`）
+        *   入力音声の長さ（wordタイムスタンプの先頭〜末尾を元にした `audio_duration_time`）
+        *   Pass1〜Pass3 のトークン数・処理時間、および実際に使用した `provider` / `model`
+        *   Pass4 のトークン数・処理時間（複数回呼び出し分を合計）、および `provider` / `model`
+        *   プロバイダー/モデルごとの 1M トークン単価（`config/llm_pricing.json`）を用いて算出した概算コスト（Pass単位の `cost_input_usd` / `cost_output_usd` / `cost_total_usd` と、run全体の `run_total_cost_usd`）
 
 ### Step 3: タイムスタンプ再計算 (Local)
 
@@ -136,7 +148,7 @@ ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
 Pass2 の `lines` で示されたインデックス範囲を word-level タイムスタンプへ直接マップする。
 
 1. **JSONの取り出し:** `{"lines":[{"from":0,"to":5,"text":"..."}]}` をパース。
-2. **17文字検証:** `text` を `unicodedata.east_asian_width` で再計測し、超過時はローカルで再分割。
+2. **17文字検証:** 行長の制約は主に Pass3/Pass4 の LLM で担保し、SRT生成段階ではローカルでの再分割は行わない（LLM が返した `text` をそのまま使用）。  
 3. **タイムスタンプ算出:**
    - 開始: `words[from].start`
    - 終了: `words[to].end`
@@ -177,7 +189,7 @@ python -m src.cli.main run <音声ファイル> [オプション]
 - `--simulate/--no-simulate` : ランナーのシミュレーション切替（デフォルトON）。
 
 #### 出力パス
-- 音声×モデル×実行時刻ごとに `temp/poc_samples/{run_id}.json` を保存。
+- 音声×モデル×実行時刻ごとに `temp/poc_samples/{run_id}.json` を保存（内部的に **最大5件まで** を保持し、古いJSONから自動削除してディスク肥大化を防ぐ）。
 - LLM整形を実行した場合のみ `output/{run_id}.srt` を自動命名で保存（`--output` オプションは存在しない）。
 
 #### 実行例
@@ -200,7 +212,7 @@ python -m src.cli.main run samples/sample_audio.m4a --llm anthropic --rewrite
 
 #### 出力
 *   LLM整形を実行した場合のみ `output/{音声名}_{モデル}_{日時}.srt` を自動保存（--outputオプションなし）
-*   文字起こしJSONは `temp/poc_samples/{run_id}.json` に保存
+*   文字起こしJSONは `temp/poc_samples/{run_id}.json` に保存されるが、最大5件までを保持し、古いファイルから自動削除される
 
 ### フェーズ4: GUIアプリ（将来実装｜Plan準拠）
 友人にとっての使いやすさを考慮し、設定項目は最小限にする。
@@ -262,6 +274,8 @@ OpenAI/Google/Anthropicの各LLMに送信する指示のプロトタイプです
 *   two-pass固定：パス1は operations JSON、パス2は `lines` JSON（from/to/text）のみを返す
 *   `[WORD: ]` タグは廃止。タイムスタンプは word インデックスで直接算出
 *   フィラー削除はパス1で最小限に抑え、語順とインデックス整合性を維持
+*   Pass3は問題が無くても必ず実行し、5〜17文字・自然な改行を最終確認（短行は統合）
+*   Pass4は長さ違反行のみ再LLMし、成功すれば置換。失敗時は元行を残し、その結果をそのまま採用する（ローカル再分割は行わない）
 
 ---
 
@@ -296,10 +310,10 @@ OpenAI/Google/Anthropicの各LLMに送信する指示のプロトタイプです
 | リスク | 影響度 | 対策 |
 |--------|--------|------|
 | タイムスタンプアライメント精度が低い | 高 | パス2の from/to インデックス検証とクランプ処理で逆行を防止 |
-| LLMが17文字制約を守らない | 中 | プロンプト改善、ローカル再分割で強制17文字以内に整形 |
+| LLMが17文字制約を守らない | 中 | プロンプト改善や Pass3/Pass4 のプロンプト調整・テストで制約遵守率を高める（ローカル強制再分割には依存しない） |
 | パス2 lines が空/不正 | 中 | 例外処理でSRT生成をスキップしログ出力、再試行を検討 |
 | 特定のLLMプロバイダーが障害 | 中 | 3社から選択可能にし、障害時は別プロバイダーへ切り替え |
-| LLM APIコストが高騰 | 低 | 各社の低コストモデルを.envでデフォルト設定（gpt-4o-mini, gemini-2.5-flash 等） |
+| LLM APIコストが高騰 | 低 | 各社の低コストモデルを.envでデフォルト設定（gpt-5-mini, gemini-2.5-flash 等） |
 | M3 MacでのGPU加速が不安定 | 中 | MLXが落ちる場合は openai-whisper をCPU/MPSで実行する |
 | 長時間音声でメモリ不足 | 中 | 全文処理前提。必要に応じて `--resume` で区切り実行し、将来必要なら軽量ブロック分割を再導入 |
 | API失敗時の処理中断 | 中 | 進捗を`temp/progress_*.json`に保存、--resumeオプションで再開可能に |

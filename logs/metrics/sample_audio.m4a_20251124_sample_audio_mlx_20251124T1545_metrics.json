@@ -1,0 +1,14 @@
+{
+  "run_id": "sample_audio_mlx_20251124T1545",
+  "audio_file": "sample_audio.m4a",
+  "runner": "mlx",
+  "requested_at": "20251124T1545",
+  "total_elapsed_time": "34.80s",
+  "audio_duration_time": "5m 3.04s",
+  "stage_timings_time": {
+    "transcribe_sec": "34.43s",
+    "llm_two_pass_sec": "0.37s"
+  },
+  "llm_tokens": {},
+  "run_total_cost_usd": 0.0
+}
