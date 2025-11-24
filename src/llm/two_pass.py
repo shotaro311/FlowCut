@@ -371,6 +371,12 @@ class TwoPassFormatter:
                     fixed_lines.append(line)
             lines = fixed_lines
 
+            # 一部のプロバイダ（特に OpenAI）では、Pass2/Pass3 の lines が
+            # 先頭付近だけに偏り、後半の単語がまったく行に割り当てられないケースがある。
+            # その場合は、残りの単語を元の WordTimestamp から単純な行に起こす
+            # フォールバックを行い、SRT が音声全体をカバーするようにする。
+            lines = self._ensure_trailing_coverage(lines, updated_words)
+
             segments = self._ranges_to_segments(updated_words, lines)
             logger.info("two-pass: completed (segments=%d)", len(segments))
             return TwoPassResult(segments=segments)
@@ -411,8 +417,75 @@ class TwoPassFormatter:
         # Re-assign indices
         for i, seg in enumerate(segments, start=1):
             seg.index = i
-            
+
         return segments
+
+    def _ensure_trailing_coverage(
+        self,
+        lines: Sequence[LineRange],
+        words: Sequence[WordTimestamp],
+    ) -> List[LineRange]:
+        """
+        LLM が先頭側だけの行しか返さず、末尾の単語に対応する行が生成されなかった場合に、
+        残りの単語を元にシンプルな行を追加して「音声全体をカバーする」ことを保証する。
+
+        既に最後の行が末尾の単語までカバーしている場合は、入力の lines をそのまま返す。
+        """
+        if not lines or not words:
+            return list(lines)
+
+        max_idx = len(words) - 1
+        # lines のうち、最も大きい end_idx を持つものを取得
+        last_line = max(lines, key=lambda l: l.end_idx)
+        if last_line.end_idx >= max_idx:
+            # すでに末尾までカバーされているのでフォールバック不要
+            return list(lines)
+
+        # 末尾側に未カバー領域がある場合のみ、簡易な行分割で補完する
+        gap_start = max(last_line.end_idx + 1, 0)
+        if gap_start > max_idx:
+            return list(lines)
+
+        fallback_lines: List[LineRange] = list(lines)
+
+        idx = gap_start
+        while idx <= max_idx:
+            line_start = idx
+            text_parts: List[str] = []
+            current_len = 0
+
+            # 最低 1 つは単語を含める & 17 文字程度を目安に分割（既存仕様を緩く模倣）
+            while idx <= max_idx:
+                word = words[idx].word or ""
+                # 日本語前提のため、ここでは単純に連結（スペースは挿入しない）
+                next_len = current_len + len(word)
+                # すでにある程度の長さがあり、これ以上繋ぐと 17 文字を大きく超える場合は改行
+                if text_parts and next_len > 17 and current_len >= 5:
+                    break
+                text_parts.append(word)
+                current_len = next_len
+                idx += 1
+
+                # ちょうど良い長さになったら一旦区切る
+                if current_len >= 10 and (idx > max_idx or current_len >= 17):
+                    break
+
+            line_end = idx - 1
+            if not text_parts:
+                # 万一 word が空文字のみだった場合でも進捗を進めて無限ループを防ぐ
+                idx += 1
+                continue
+
+            fallback_lines.append(
+                LineRange(
+                    start_idx=line_start,
+                    end_idx=line_end,
+                    text="".join(text_parts),
+                )
+            )
+
+        # 元の行とフォールバック行を start_idx でソートして返す
+        return sorted(fallback_lines, key=lambda l: (l.start_idx, l.end_idx))
 
     def _build_pass1_prompt(self, raw_text: str, words: Sequence[WordTimestamp]) -> str:
         indexed = _build_indexed_words(words)
