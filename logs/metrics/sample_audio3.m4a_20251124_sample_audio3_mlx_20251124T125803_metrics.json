@@ -1,0 +1,37 @@
+{
+  "run_id": "sample_audio3_mlx_20251124T125803",
+  "audio_file": "sample_audio3.m4a",
+  "runner": "mlx",
+  "requested_at": "20251124T125803",
+  "total_elapsed_sec": 936.6128957080073,
+  "stage_timings_sec": {
+    "transcribe_sec": 89.96713287499733,
+    "llm_two_pass_sec": 846.5856432919973
+  },
+  "llm_tokens": {
+    "pass1": {
+      "prompt_tokens": 25715,
+      "completion_tokens": 1775,
+      "total_tokens": 38618,
+      "duration_sec": 103.54360441700555
+    },
+    "pass2": {
+      "prompt_tokens": 24007,
+      "completion_tokens": 10910,
+      "total_tokens": 46286,
+      "duration_sec": 139.66327645798447
+    },
+    "pass3": {
+      "prompt_tokens": 34379,
+      "completion_tokens": 12090,
+      "total_tokens": 69796,
+      "duration_sec": 382.72445062498446
+    },
+    "pass4": {
+      "prompt_tokens": 2486,
+      "completion_tokens": 485,
+      "total_tokens": 18121,
+      "duration_sec": 220.61156978897634
+    }
+  }
+}

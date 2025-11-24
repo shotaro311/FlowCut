@@ -1,0 +1,38 @@
+{
+  "run_id": "audio_openai_20250101T000000",
+  "audio_file": "audio.m4a",
+  "runner": "openai",
+  "requested_at": "20250101T000000",
+  "total_elapsed_time": "0.00s",
+  "audio_duration_time": "2.11s",
+  "stage_timings_time": {
+    "transcribe_sec": "0.00s",
+    "llm_two_pass_sec": "0.00s"
+  },
+  "llm_tokens": {
+    "pass1": {
+      "provider": null,
+      "model": null,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0,
+      "duration_time": "0.00s"
+    },
+    "pass2": {
+      "provider": null,
+      "model": null,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0,
+      "duration_time": "0.00s"
+    },
+    "pass3": {
+      "provider": null,
+      "model": null,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0,
+      "duration_time": "0.00s"
+    }
+  }
+}
