@@ -33,6 +33,15 @@
       "completion_tokens": 0,
       "total_tokens": 0,
       "duration_time": "0.00s"
+    },
+    "pass4": {
+      "provider": null,
+      "model": null,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0,
+      "duration_time": "0.00s"
     }
-  }
+  },
+  "run_total_cost_usd": 0.0
 }

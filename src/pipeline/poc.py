@@ -52,8 +52,8 @@ class PocRunOptions:
     llm_timeout: float | None = None
 
     def normalized_timestamp(self) -> str:
-        # 秒精度までは不要なので、分までを採用（例: 20251124T1258）
-        return self.timestamp or datetime.now().strftime("%Y%m%dT%H%M")
+        # ファイル名の衝突を避けるため、秒まで含めたタイムスタンプを使用（例: 20251124T125830）
+        return self.timestamp or datetime.now().strftime("%Y%m%dT%H%M%S")
 
 
 def resolve_models(raw: str | None) -> List[str]:
