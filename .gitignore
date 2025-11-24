@@ -14,6 +14,11 @@ dist/
 .pytest_cache/
 .coverage
 htmlcov/
+logs/metrics/
+logs/llm_raw/
+temp/progress/
+temp/poc_samples/
+
 
 # Virtual environments
 .venv/
