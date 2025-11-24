@@ -23,7 +23,7 @@ def test_pass3_runs_even_when_no_issues(monkeypatch):
     """
     calls: list[str] = []
 
-    def fake_call_llm(self, payload: str, model_override=None):
+    def fake_call_llm(self, payload: str, model_override=None, pass_label=None):
         calls.append(payload)
         # Pass1 → operations なし
         if len(calls) == 1:

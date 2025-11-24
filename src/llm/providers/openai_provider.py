@@ -10,6 +10,7 @@ import requests
 from src.config import get_settings
 
 from ..formatter import BaseLLMProvider, FormatterError, FormatterRequest, register_provider
+from ..usage_metrics import record_usage_from_request
 from ..prompts import PromptPayload
 from ..api_client import post_json_request
 
@@ -52,11 +53,22 @@ class OpenAIChatProvider(BaseLLMProvider):
             raise FormatterError(f"OpenAI API 応答を解釈できません: {json.dumps(data)}") from exc
 
         usage = data.get("usage", {})
+        prompt_tokens = usage.get("prompt_tokens")
+        completion_tokens = usage.get("completion_tokens")
+        total_tokens = usage.get("total_tokens")
         logger.info(
             "llm_usage provider=openai model=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s",
             model,
-            usage.get("prompt_tokens"),
-            usage.get("completion_tokens"),
-            usage.get("total_tokens"),
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+        )
+        record_usage_from_request(
+            request.metadata,
+            provider="openai",
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
         )
         return content

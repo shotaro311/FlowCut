@@ -42,12 +42,18 @@ class PocRunOptions:
     timestamp: str | None = None
     resume_source: Path | None = None
     llm_provider: str | None = None
+    llm_profile: str | None = None
+    llm_pass1_model: str | None = None
+    llm_pass2_model: str | None = None
+    llm_pass3_model: str | None = None
+    llm_pass4_model: str | None = None
     rewrite: bool | None = None
     llm_temperature: float | None = None
     llm_timeout: float | None = None
 
     def normalized_timestamp(self) -> str:
-        return self.timestamp or datetime.now().strftime("%Y%m%dT%H%M%S")
+        # 秒精度までは不要なので、分までを採用（例: 20251124T1258）
+        return self.timestamp or datetime.now().strftime("%Y%m%dT%H%M")
 
 
 def resolve_models(raw: str | None) -> List[str]:
@@ -103,6 +109,7 @@ def execute_poc_run(
         logger.info("=== %s (%s) ===", slug, runner.display_name)
         runner.prepare(config)
         for audio_path in audio_files:
+            t_run_start = time.perf_counter()
             t_transcribe_start = time.perf_counter()
             result = runner.transcribe(audio_path, config)
             t_transcribe_end = time.perf_counter()
@@ -128,6 +135,12 @@ def execute_poc_run(
                         llm_provider=options.llm_provider,
                         temperature=options.llm_temperature,
                         timeout=options.llm_timeout,
+                        pass1_model=options.llm_pass1_model,
+                        pass2_model=options.llm_pass2_model,
+                        pass3_model=options.llm_pass3_model,
+                        pass4_model=options.llm_pass4_model,
+                        run_id=run_id,
+                        source_name=audio_path.name,
                     )
                     t_llm_start = time.perf_counter()
                     try:
@@ -167,6 +180,37 @@ def execute_poc_run(
                 ),
                 llm_provider=options.llm_provider,
             )
+            t_run_end = time.perf_counter()
+
+            # メトリクスファイル出力（LLM実行時のみ）
+            if options.llm_provider:
+                try:
+                    from src.llm.usage_metrics import consume_usage_for_run, write_run_metrics_file
+
+                    usage_by_pass = consume_usage_for_run(run_id)
+                    # 音声ファイルの長さ（wordタイムスタンプの先頭〜末尾）
+                    words = result.words or []
+                    if words:
+                        audio_duration = max(0.0, (words[-1].end or 0.0) - (words[0].start or 0.0))
+                    else:
+                        audio_duration = 0.0
+                    stage_timings = {
+                        "transcribe_sec": t_transcribe_end - t_transcribe_start,
+                        "llm_two_pass_sec": (t_llm_end - t_llm_start) if result.words else 0.0,
+                    }
+                    total_elapsed = t_run_end - t_run_start
+                    write_run_metrics_file(
+                        run_id=run_id,
+                        source_name=audio_path.name,
+                        runner_slug=slug,
+                        timestamp=timestamp,
+                        stage_timings_sec=stage_timings,
+                        total_elapsed_sec=total_elapsed,
+                        usage_by_pass=usage_by_pass,
+                        audio_duration_sec=audio_duration,
+                    )
+                except Exception as exc:  # pragma: no cover - メトリクス書き込み失敗は致命的でない
+                    logger.warning("メトリクスファイルの出力に失敗しました: %s", exc)
             saved_paths.append(output_path)
     return saved_paths
 
@@ -197,6 +241,7 @@ def save_result(result: TranscriptionResult, dest: Path, *, blocks: List[dict] |
         payload["blocks"] = blocks
     dest.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
     logger.info("結果を保存しました: %s", dest)
+    _enforce_poc_samples_file_limit(dest.parent, max_files=5)
 
 
 def save_progress_snapshot(
@@ -226,6 +271,7 @@ def save_progress_snapshot(
     progress_dir.mkdir(parents=True, exist_ok=True)
     save_progress(record, save_path)
     logger.info("進捗ファイルを保存しました: %s", save_path)
+    _enforce_progress_file_limit(progress_dir, max_files=5)
 
 
 class ResumeCompletedError(RuntimeError):
@@ -257,6 +303,11 @@ def prepare_resume_run(
         timestamp=timestamp,
         resume_source=progress_path,
         llm_provider=base_options.llm_provider or option_meta.get("llm_provider"),
+        llm_profile=option_meta.get("llm_profile"),
+        llm_pass1_model=option_meta.get("llm_pass1_model"),
+        llm_pass2_model=option_meta.get("llm_pass2_model"),
+        llm_pass3_model=option_meta.get("llm_pass3_model"),
+        llm_pass4_model=option_meta.get("llm_pass4_model"),
         rewrite=(
             base_options.rewrite
             if base_options.rewrite is not None
@@ -272,6 +323,58 @@ def prepare_resume_run(
         ),
     )
     return record, audio_files, [record.model], resume_options
+
+
+def _enforce_progress_file_limit(progress_dir: Path, max_files: int = 5) -> None:
+    """progress_dir（通常は temp/progress）内の進捗ファイル数を max_files までに保ち、
+    古いものから削除して増え続けないようにする。
+
+    - 対象: progress_dir 直下の `*.json`
+    - 判定基準: ファイルの更新時刻（古い順）
+    """
+    try:
+        if not progress_dir.exists():
+            return
+        files = sorted(
+            progress_dir.glob("*.json"),
+            key=lambda p: p.stat().st_mtime,
+        )
+        if len(files) <= max_files:
+            return
+        for old_path in files[:-max_files]:
+            try:
+                old_path.unlink()
+                logger.info("古い進捗ファイルを削除しました: %s", old_path)
+            except Exception as exc:  # pragma: no cover - ログのみ
+                logger.warning("進捗ファイルの削除に失敗しました: %s (%s)", old_path, exc)
+    except Exception as exc:  # pragma: no cover - ここで落ちないようにする
+        logger.warning("進捗ファイル上限チェックに失敗しました: %s", exc)
+
+
+def _enforce_poc_samples_file_limit(output_dir: Path, max_files: int = 5) -> None:
+    """poc_samples（通常は temp/poc_samples）内のJSON数を max_files までに保ち、
+    古いものから削除して増え続けないようにする。
+
+    - 対象: output_dir 直下の `*.json`
+    - 判定基準: ファイルの更新時刻（古い順）
+    """
+    try:
+        if not output_dir.exists():
+            return
+        files = sorted(
+            output_dir.glob("*.json"),
+            key=lambda p: p.stat().st_mtime,
+        )
+        if len(files) <= max_files:
+            return
+        for old_path in files[:-max_files]:
+            try:
+                old_path.unlink()
+                logger.info("古いPoCサンプルファイルを削除しました: %s", old_path)
+            except Exception as exc:  # pragma: no cover - ログのみ
+                logger.warning("PoCサンプルファイルの削除に失敗しました: %s (%s)", old_path, exc)
+    except Exception as exc:  # pragma: no cover
+        logger.warning("PoCサンプルファイル上限チェックに失敗しました: %s", exc)
 
 
 def _extract_timestamp(record: ProgressRecord) -> str | None:
@@ -298,6 +401,11 @@ def _build_progress_metadata(
         "chunk_size": options.chunk_size,
         "simulate": options.simulate,
         "llm_provider": options.llm_provider,
+        "llm_profile": options.llm_profile,
+        "llm_pass1_model": options.llm_pass1_model,
+        "llm_pass2_model": options.llm_pass2_model,
+        "llm_pass3_model": options.llm_pass3_model,
+        "llm_pass4_model": options.llm_pass4_model,
         "rewrite": options.rewrite,
         "llm_temperature": options.llm_temperature,
         "llm_timeout": options.llm_timeout,

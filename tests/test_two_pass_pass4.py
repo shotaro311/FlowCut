@@ -21,7 +21,7 @@ def test_pass4_runs_for_overlength_line(monkeypatch):
     """
     calls = []
 
-    def fake_call_llm(self, payload: str, model_override=None):
+    def fake_call_llm(self, payload: str, model_override=None, pass_label=None):
         calls.append(payload)
         # call order: pass1, pass2, pass3, pass4
         if len(calls) == 1:

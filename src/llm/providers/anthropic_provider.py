@@ -10,6 +10,7 @@ import requests
 from src.config import get_settings
 
 from ..formatter import BaseLLMProvider, FormatterError, FormatterRequest, register_provider
+from ..usage_metrics import record_usage_from_request
 from ..prompts import PromptPayload
 from ..api_client import post_json_request
 
@@ -92,11 +93,26 @@ class AnthropicClaudeProvider(BaseLLMProvider):
         texts = _extract_text_blocks(data.get("content"))
         if texts:
             usage = data.get("usage", {})
+            input_tokens = usage.get("input_tokens")
+            output_tokens = usage.get("output_tokens")
+            total_tokens = (
+                (input_tokens or 0) + (output_tokens or 0)
+                if isinstance(input_tokens, int) and isinstance(output_tokens, int)
+                else None
+            )
             logger.info(
                 "llm_usage provider=anthropic model=%s input_tokens=%s output_tokens=%s",
                 model,
-                usage.get("input_tokens"),
-                usage.get("output_tokens"),
+                input_tokens,
+                output_tokens,
+            )
+            record_usage_from_request(
+                request.metadata,
+                provider="anthropic",
+                model=model,
+                prompt_tokens=input_tokens,
+                completion_tokens=output_tokens,
+                total_tokens=total_tokens,
             )
             return "\n".join(texts)
         # 一部のモック/旧仕様では top-level text がある場合がある

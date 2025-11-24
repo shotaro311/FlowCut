@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import uuid
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +15,7 @@ from src.config import get_settings
 from src.llm.formatter import FormatterError, get_provider, FormatterRequest
 from src.llm.prompts import PromptPayload
 from src.transcribe.base import WordTimestamp
+from src.llm.usage_metrics import record_pass_time
 
 logger = logging.getLogger(__name__)
 RAW_LOG_DIR = Path("logs/llm_raw")
@@ -61,7 +63,11 @@ def _extract_json(text: str) -> Any:
 
 
 def _log_raw_response(pass_label: str, raw: str) -> None:
-    """Persist raw LLM response for debugging."""
+    """Persist raw LLM response for debugging.
+
+    NOTE: この関数は旧実装との後方互換用。現在の実際のログは
+    TwoPassFormatter 内の run_id / source_name 単位で集約される。
+    """
     try:
         RAW_LOG_DIR.mkdir(parents=True, exist_ok=True)
         ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
@@ -140,6 +146,7 @@ def _call_llm_with_parse(
     model_override: str | None,
     retries: int = 2,
     soft_fail: bool = False,
+    log_sink: "TwoPassFormatter | None" = None,
 ) -> tuple[str | None, Any | None]:
     """
     Call LLM, log raw, parse JSON with limited retries.
@@ -147,8 +154,12 @@ def _call_llm_with_parse(
     """
     last_exc: Exception | None = None
     for attempt in range(1, retries + 1):
-        raw = call_fn(prompt, model_override=model_override)
-        _log_raw_response(pass_label, raw)
+        raw = call_fn(prompt, model_override=model_override, pass_label=pass_label)
+        # ログ集約先があればそこへ、なければ旧方式で単発ログ
+        if log_sink is not None:
+            log_sink._append_raw_log(pass_label, raw)
+        else:
+            _log_raw_response(pass_label, raw)
         try:
             parsed = _safe_trim_json_response(raw)
             return raw, parsed
@@ -173,6 +184,9 @@ class TwoPassFormatter:
         pass2_model: str | None = None,
         pass3_model: str | None = None,
         pass4_model: str | None = None,
+        *,
+        run_id: str | None = None,
+        source_name: str | None = None,
     ) -> None:
         settings = get_settings().llm
         self.provider_slug = llm_provider
@@ -182,14 +196,50 @@ class TwoPassFormatter:
         self.pass1_model = pass1_model or settings.pass1_model
         self.pass2_model = pass2_model or settings.pass2_model
         self.pass3_model = pass3_model or settings.pass3_model  # Default to Flash for cost efficiency
-        self.pass4_model = pass4_model or self.pass3_model  # reuse pass3 if not specified
+        # Pass4 は settings.pass4_model（= LLM_PASS4_MODEL or LLM_PASS3_MODEL）を尊重しつつ、
+        # プロファイルやCLIからの引数で上書きできるようにする。
+        self.pass4_model = pass4_model or settings.pass4_model
+        # ログ用コンテキスト（処理単位で1ファイルにまとめる）
+        self.run_id = run_id
+        self.source_name = source_name
+        self._log_buffer: Dict[str, str] = {}
+        self._log_date_str = datetime.utcnow().strftime("%Y%m%d")
+        self._log_written = False
 
-    def _call_llm(self, prompt_text: str, model_override: str | None = None) -> str:
+    # --- logging helpers -------------------------------------------------
+
+    def _append_raw_log(self, pass_label: str, raw: str) -> None:
+        # パスごとに区切りを付けて1ファイルにまとめるためのバッファ
+        prefix = f"\n\n===== {pass_label} =====\n"
+        existing = self._log_buffer.get(pass_label, "")
+        self._log_buffer[pass_label] = existing + prefix + raw
+
+    def _flush_logs(self) -> None:
+        """現在の run 内で蓄積した LLM 生ログを1ファイルにまとめて書き出す。"""
+        if self._log_written or not self._log_buffer:
+            return
+        try:
+            RAW_LOG_DIR.mkdir(parents=True, exist_ok=True)
+            base_name = (self.source_name or self.run_id or "llm_run").replace("/", "_")
+            # yyyymmdd_連番 の連番部分は run_id があればそれを使い、無ければ uuid 短縮
+            suffix = self.run_id or uuid.uuid4().hex[:8]
+            fname = RAW_LOG_DIR / f"{base_name}_{self._log_date_str}_{suffix}.txt"
+            # パス順で安定した並びにして書き出す
+            ordered = []
+            for label in sorted(self._log_buffer.keys()):
+                ordered.append(self._log_buffer[label])
+            fname.write_text("".join(ordered), encoding="utf-8")
+            logger.debug("Saved aggregated raw LLM response to %s", fname)
+            self._log_written = True
+        except Exception as exc:  # pragma: no cover - ログ失敗は致命的でない
+            logger.warning("Failed to save aggregated LLM raw log: %s", exc)
+
+    def _call_llm(self, prompt_text: str, model_override: str | None = None, pass_label: str | None = None) -> str:
         provider = get_provider(self.provider_slug)
         payload = PromptPayload(system_prompt="", user_prompt=prompt_text)
         
         # Add model override to metadata if specified
-        metadata = {}
+        metadata: Dict[str, Any] = {}
         if model_override:
             if self.provider_slug == "google":
                 metadata["google_model"] = model_override
@@ -199,6 +249,14 @@ class TwoPassFormatter:
                 metadata["anthropic_model"] = model_override
             else:
                 metadata["model"] = model_override
+        # run_id / source_name / pass_label をメタデータに載せておくと、
+        # プロバイダー側でトークン使用量をパス別に集計できる。
+        if self.run_id:
+            metadata["run_id"] = self.run_id
+        if self.source_name:
+            metadata["source_name"] = self.source_name
+        if pass_label:
+            metadata["pass_label"] = pass_label
         
         req = FormatterRequest(
             block_text="",
@@ -222,85 +280,103 @@ class TwoPassFormatter:
     ) -> TwoPassResult | None:
         if not words:
             raise FormatterError("wordタイムスタンプが空です")
+        try:
+            logger.info("two-pass: pass1 start (words=%d, provider=%s)", len(words), self.provider_slug)
+            # Pass1: replace/delete only
+            pass1_prompt = self._build_pass1_prompt(text, words)
+            logger.debug("Calling LLM for Pass 1. Prompt length: %d", len(pass1_prompt))
+            t_p1_start = time.perf_counter()
+            raw1, parsed1 = _call_llm_with_parse(
+                self._call_llm,
+                pass_label="pass1",
+                prompt=pass1_prompt,
+                model_override=self.pass1_model,
+                retries=2,
+                soft_fail=False,
+                log_sink=self,
+            )
+            t_p1_end = time.perf_counter()
+            record_pass_time(self.run_id, "pass1", t_p1_end - t_p1_start)
+            ops = _parse_operations(parsed1)
+            updated_words = _apply_operations(words, ops) if ops else list(words)
 
-        logger.info("two-pass: pass1 start (words=%d, provider=%s)", len(words), self.provider_slug)
-        # Pass1: replace/delete only
-        pass1_prompt = self._build_pass1_prompt(text, words)
-        logger.debug("Calling LLM for Pass 1. Prompt length: %d", len(pass1_prompt))
-        raw1, parsed1 = _call_llm_with_parse(
-            self._call_llm,
-            pass_label="pass1",
-            prompt=pass1_prompt,
-            model_override=self.pass1_model,
-            retries=2,
-            soft_fail=False,
-        )
-        ops = _parse_operations(parsed1)
-        updated_words = _apply_operations(words, ops) if ops else list(words)
+            if not updated_words:
+                # If all words deleted, return empty result (valid case)
+                return TwoPassResult(segments=[])
 
-        if not updated_words:
-            # If all words deleted, return empty result (valid case)
-            return TwoPassResult(segments=[])
+            logger.info("two-pass: pass2 start (words=%d)", len(updated_words))
+            # Pass2: line splits
+            pass2_prompt = self._build_pass2_prompt(updated_words, max_chars=max_chars)
+            logger.debug("Calling LLM for Pass 2. Prompt length: %d", len(pass2_prompt))
+            t_p2_start = time.perf_counter()
+            raw2, parsed2 = _call_llm_with_parse(
+                self._call_llm,
+                pass_label="pass2",
+                prompt=pass2_prompt,
+                model_override=self.pass2_model,
+                retries=2,
+                soft_fail=False,
+                log_sink=self,
+            )
+            t_p2_end = time.perf_counter()
+            record_pass_time(self.run_id, "pass2", t_p2_end - t_p2_start)
+            lines = _parse_lines(parsed2)
+            if not lines:
+                raise FormatterError("行分割結果が空です")
 
-        logger.info("two-pass: pass2 start (words=%d)", len(updated_words))
-        # Pass2: line splits
-        pass2_prompt = self._build_pass2_prompt(updated_words, max_chars=max_chars)
-        logger.debug("Calling LLM for Pass 2. Prompt length: %d", len(pass2_prompt))
-        raw2, parsed2 = _call_llm_with_parse(
-            self._call_llm,
-            pass_label="pass2",
-            prompt=pass2_prompt,
-            model_override=self.pass2_model,
-            retries=2,
-            soft_fail=False,
-        )
-        lines = _parse_lines(parsed2)
-        if not lines:
-            raise FormatterError("行分割結果が空です")
+            # Pass3: Validation (now always executed)
+            from src.llm.validators import detect_issues
+            if not enable_pass3:
+                logger.warning("enable_pass3=False は非推奨になりました。Pass3は常に実行されます。")
 
-        # Pass3: Validation (now always executed)
-        from src.llm.validators import detect_issues
-        if not enable_pass3:
-            logger.warning("enable_pass3=False は非推奨になりました。Pass3は常に実行されます。")
+            issues = detect_issues(lines, updated_words)
+            logger.info("two-pass: pass3 start (%d issues detected)", len(issues))
+            for issue in issues:
+                logger.debug("  - %s", issue.description)
 
-        issues = detect_issues(lines, updated_words)
-        logger.info("two-pass: pass3 start (%d issues detected)", len(issues))
-        for issue in issues:
-            logger.debug("  - %s", issue.description)
-
-        pass3_prompt = self._build_pass3_prompt(lines, updated_words, issues)
-        logger.debug("Calling LLM for Pass 3. Prompt length: %d", len(pass3_prompt))
-        raw3, parsed3 = _call_llm_with_parse(
-            self._call_llm,
-            pass_label="pass3",
-            prompt=pass3_prompt,
-            model_override=self.pass3_model,
-            retries=2,
-            soft_fail=True,
-        )
-        if parsed3:
-            pass3_lines = _parse_lines(parsed3)
-            if pass3_lines:
-                lines = pass3_lines
+            pass3_prompt = self._build_pass3_prompt(lines, updated_words, issues)
+            logger.debug("Calling LLM for Pass 3. Prompt length: %d", len(pass3_prompt))
+            t_p3_start = time.perf_counter()
+            raw3, parsed3 = _call_llm_with_parse(
+                self._call_llm,
+                pass_label="pass3",
+                prompt=pass3_prompt,
+                model_override=self.pass3_model,
+                retries=2,
+                soft_fail=True,
+                log_sink=self,
+            )
+            t_p3_end = time.perf_counter()
+            record_pass_time(self.run_id, "pass3", t_p3_end - t_p3_start)
+            if parsed3:
+                pass3_lines = _parse_lines(parsed3)
+                if pass3_lines:
+                    lines = pass3_lines
+                else:
+                    logger.warning("Pass 3 returned empty lines, using Pass 2 output")
             else:
-                logger.warning("Pass 3 returned empty lines, using Pass 2 output")
-        else:
-            logger.warning("Pass 3 parsing failed; using Pass 2 output")
+                logger.warning("Pass 3 parsing failed; using Pass 2 output")
 
-        # Pass4: re-run only lines that violate length bounds to avoid local forced split
-        fixed_lines: List[LineRange] = []
-        for line in lines:
-            if self._needs_pass4(line):
-                logger.info("pass4: line length %d out of bounds, retrying LLM", len(line.text))
-                repl = self._run_pass4_fix(line, updated_words)
-                fixed_lines.extend(repl)
-            else:
-                fixed_lines.append(line)
-        lines = fixed_lines
+            # Pass4: re-run only lines that violate length bounds
+            fixed_lines: List[LineRange] = []
+            for line in lines:
+                if self._needs_pass4(line):
+                    logger.info("pass4: line length %d out of bounds, retrying LLM", len(line.text))
+                    t_p4_start = time.perf_counter()
+                    repl = self._run_pass4_fix(line, updated_words)
+                    t_p4_end = time.perf_counter()
+                    record_pass_time(self.run_id, "pass4", t_p4_end - t_p4_start)
+                    fixed_lines.extend(repl)
+                else:
+                    fixed_lines.append(line)
+            lines = fixed_lines
 
-        segments = self._ranges_to_segments(updated_words, lines)
-        logger.info("two-pass: completed (segments=%d)", len(segments))
-        return TwoPassResult(segments=segments)
+            segments = self._ranges_to_segments(updated_words, lines)
+            logger.info("two-pass: completed (segments=%d)", len(segments))
+            return TwoPassResult(segments=segments)
+        finally:
+            # 一回の run ごとに raw LLM 応答を1ファイルにまとめてフラッシュ
+            self._flush_logs()
 
     def _ranges_to_segments(self, words: Sequence[WordTimestamp], lines: Sequence[LineRange]) -> List["SubtitleSegment"]:
         from src.alignment.srt import SubtitleSegment
@@ -312,86 +388,31 @@ class TwoPassFormatter:
             if line.start_idx < 0 or line.end_idx >= len(words) or line.start_idx > line.end_idx:
                 logger.warning("行範囲が不正なためスキップ: %s", line)
                 continue
-            
-            # Check for max chars overflow (fallback for LLM failure)
+
+            # LLM（Pass2/Pass3/Pass4）が決めた行分割をそのまま採用する。
             current_text = line.text
-            if len(current_text) > 17:
-                # Local split required
-                split_segments = self._split_line_locally(words, line.start_idx, line.end_idx, max_chars=17)
-                for seg in split_segments:
-                    # Clamp start time to prevent backward jumps
-                    if seg.start < last_end_time:
-                        logger.warning(
-                            "Timestamp backward jump detected (clamped): %.2f -> %.2f", seg.start, last_end_time
-                        )
-                        seg.start = last_end_time
-                    
-                    # Ensure end >= start
-                    if seg.end < seg.start:
-                        seg.end = seg.start + 0.1
-                        
-                    segments.append(seg)
-                    last_end_time = seg.end
-            else:
-                # Normal case: use exact word timestamps
-                start = words[line.start_idx].start or 0.0
-                end = words[line.end_idx].end or start
-                
-                # Clamp start time
-                if start < last_end_time:
-                    logger.warning(
-                        "Timestamp backward jump detected (clamped): %.2f -> %.2f", start, last_end_time
-                    )
-                    start = last_end_time
-                
-                # Ensure end >= start
-                if end < start:
-                    end = start + 0.1
-                    
-                segments.append(SubtitleSegment(index=0, start=start, end=end, text=current_text))
-                last_end_time = end
+            start = words[line.start_idx].start or 0.0
+            end = words[line.end_idx].end or start
+
+            # タイムスタンプの巻き戻りだけはローカルで補正する
+            if start < last_end_time:
+                logger.warning(
+                    "Timestamp backward jump detected (clamped): %.2f -> %.2f", start, last_end_time
+                )
+                start = last_end_time
+
+            # end < start になってしまった場合の最小補正
+            if end < start:
+                end = start + 0.1
+
+            segments.append(SubtitleSegment(index=0, start=start, end=end, text=current_text))
+            last_end_time = end
 
         # Re-assign indices
         for i, seg in enumerate(segments, start=1):
             seg.index = i
             
         return segments
-
-    def _split_line_locally(
-        self, words: Sequence[WordTimestamp], start_idx: int, end_idx: int, max_chars: int
-    ) -> List["SubtitleSegment"]:
-        from src.alignment.srt import SubtitleSegment
-        
-        results = []
-        current_start_idx = start_idx
-        
-        while current_start_idx <= end_idx:
-            # Build a chunk that fits in max_chars
-            current_chars = 0
-            chunk_end_idx = current_start_idx
-            
-            # Try to extend chunk as much as possible
-            for i in range(current_start_idx, end_idx + 1):
-                word_len = len(words[i].word)
-                if current_chars + word_len > max_chars and current_chars > 0:
-                    # Stop here, this word makes it too long
-                    break
-                current_chars += word_len
-                chunk_end_idx = i
-            
-            # Create segment for this chunk
-            chunk_text = "".join(w.word for w in words[current_start_idx : chunk_end_idx + 1])
-            start_time = words[current_start_idx].start or 0.0
-            end_time = words[chunk_end_idx].end or start_time
-            if end_time < start_time:
-                end_time = start_time + 0.1
-                
-            results.append(SubtitleSegment(index=0, start=start_time, end=end_time, text=chunk_text))
-            
-            # Move to next
-            current_start_idx = chunk_end_idx + 1
-            
-        return results
 
     def _build_pass1_prompt(self, raw_text: str, words: Sequence[WordTimestamp]) -> str:
         indexed = _build_indexed_words(words)
@@ -563,6 +584,7 @@ class TwoPassFormatter:
             model_override=self.pass4_model,
             retries=1,
             soft_fail=True,
+            log_sink=self,
         )
         if parsed:
             repl = _parse_lines(parsed)
