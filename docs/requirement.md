@@ -229,6 +229,11 @@ python -m src.cli.main run samples/sample_audio.m4a --llm anthropic --rewrite
     *   元の音声ファイルと同じフォルダに `filename_subtitle.srt` を保存。
     *   完了時に通知を表示
 
+#### 将来のWebアプリ版について（メモ）
+- 本要件定義のMVPでは「ローカル実行できるGUI（Tkinter / Flet想定）」を優先し、ブラウザ上で動くWebアプリ版は**別フェーズ**で検討する。  
+- そのため、音声→文字起こし→整形→SRT出力のコア処理は `src/pipeline/poc.py` などに集約し、CLI / GUI / 将来のWeb UIから **共通のパイプラインを呼び出す設計** を前提とする。  
+- Webアプリ版を作る際は「既存ロジックをAPI化してフロントエンドから呼ぶ」構成とし、Tkinter実装を直接Webに移植しない。
+
 ## 5. プロンプト設計案（コアロジック）
 OpenAI/Google/Anthropicの各LLMに送信する指示のプロトタイプです。
 基本的なプロンプトは共通で、各プロバイダーのAPI仕様に合わせて送信します。
@@ -303,6 +308,10 @@ OpenAI/Google/Anthropicの各LLMに送信する指示のプロトタイプです
 
 ### フェーズ5: パッケージ化（GUI後）
 - PyInstaller / py2app 等で .app 化し、友人環境で配布確認
+
+### （案）フェーズ6: Web UI（要検討・TODO）
+- ブラウザから音声ファイルをアップロードし、バックエンドAPI（既存パイプラインのラッパー）経由でSRTを生成できるWebフロントエンド。  
+- 具体的な技術スタック（例: FastAPI + React / Next.js）は未決定のため、ここでは **TODOレベルのメモ** として残しておく。  
 
 ---
 
