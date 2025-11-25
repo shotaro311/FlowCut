@@ -7,6 +7,7 @@ from typing import List, Optional
 
 import typer
 
+from src.gui.app import run_gui
 from src.pipeline import (
     PocRunOptions,
     ResumeCompletedError,
@@ -31,6 +32,13 @@ def list_available_models() -> None:
     """登録済みの音声認識ランナーを一覧表示する。"""
     for data in list_models():
         typer.echo(f"- {data['slug']:7} | {data['display_name']} | model={data['default_model']}")
+
+
+@app.command("gui")
+def launch_gui() -> None:
+    """Tkinter ベースの最小GUIを起動する。"""
+
+    run_gui()
 
 
 def _normalize_llm_provider(raw: Optional[str]) -> Optional[str]:
