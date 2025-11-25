@@ -106,14 +106,15 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
     *   単語レベルのタイムスタンプリスト（JSON形式で保持）
 
 ### Step 2: 文脈理解と整形 (Cloud API)
-*   **(現状)** Whisper全文を選択したLLM APIへ送信し、改行・整形を行う（Blockingなし）。
-*   **(採用方針：二段階LLMワークフロー)** `docs/specs/llm_two_pass_workflow.md` 参照  
+*   Whisper全文を選択したLLM APIへ送信し、改行・整形を行う。
+*   **採用方針：二段階＋検証ワークフロー**（TwoPassFormatter + Pass3/Pass4）: `docs/specs/llm_two_pass_workflow.md` 参照  
     - **パス1 (Text Cleaning):** 置換・削除のみ（挿入禁止）で誤字・フィラー除去。単語インデックス指定のJSONを返す。  
     - **パス2 (Line Splitting):** 17文字分割のみを決める。行範囲をインデックスで返す。  
     - **時間計算:** ローカルで行い、Whisperのwordタイムスタンプを維持する（尺伸び防止）。  
     - **タイムスタンプ補正 (Clamping):** LLMのインデックス指定ミスによる時間の巻き戻りを検知し、強制的に時系列順に補正する。  
     - **最小行長/Pass3:** 行は原則5〜17文字。問題がなくても Pass3 で最終確認し、短行は統合する。  
-    - **Pass4（長さ違反行のみ再LLM）:** Pass3後に5文字未満/17文字超の行だけを再度LLMにかけ直す。出力が空/不正の場合は元行を維持し、Pass4 の段階で出力された `lines` をそのまま採用する（Pass4 後にローカルでの強制再分割は行わない）。
+    - **Pass4（長さ違反行のみ再LLM）:** Pass3後に5文字未満/17文字超の行だけを再度LLMにかけ直す。出力が空/不正の場合は元行を維持し、Pass4 の段階で出力された `lines` をそのまま採用する（Pass4 後にローカルでの強制再分割は行わない）。  
+    - **末尾カバレッジ保証（プロバイダ差異の吸収）:** 一部プロバイダ（特に OpenAI）では、Pass2/Pass3 の `lines` が先頭側に偏り、末尾の単語に対応する行が生成されないケースがある。この場合は TwoPassFormatter 内のフォールバック（`_ensure_trailing_coverage`）により、未カバーの単語から簡易な行を自動生成し、**常に文字起こし全文がSRTに反映される**ようにする。
 *   **プロンプトの役割（two-pass）:**
     1.  パス1: 置換/削除のみを operations 配列(JSON)で返す。挿入禁止・順序を変えない。
     2.  パス2: 17文字以内の自然な行分割を `{"lines":[{"from":0,"to":10,"text":"..."}]}` 形式で返す。
@@ -228,6 +229,11 @@ python -m src.cli.main run samples/sample_audio.m4a --llm anthropic --rewrite
     *   元の音声ファイルと同じフォルダに `filename_subtitle.srt` を保存。
     *   完了時に通知を表示
 
+#### 将来のWebアプリ版について（メモ）
+- 本要件定義のMVPでは「ローカル実行できるGUI（Tkinter / Flet想定）」を優先し、ブラウザ上で動くWebアプリ版は**別フェーズ**で検討する。  
+- そのため、音声→文字起こし→整形→SRT出力のコア処理は `src/pipeline/poc.py` などに集約し、CLI / GUI / 将来のWeb UIから **共通のパイプラインを呼び出す設計** を前提とする。  
+- Webアプリ版を作る際は「既存ロジックをAPI化してフロントエンドから呼ぶ」構成とし、Tkinter実装を直接Webに移植しない。
+
 ## 5. プロンプト設計案（コアロジック）
 OpenAI/Google/Anthropicの各LLMに送信する指示のプロトタイプです。
 基本的なプロンプトは共通で、各プロバイダーのAPI仕様に合わせて送信します。
@@ -302,6 +308,10 @@ OpenAI/Google/Anthropicの各LLMに送信する指示のプロトタイプです
 
 ### フェーズ5: パッケージ化（GUI後）
 - PyInstaller / py2app 等で .app 化し、友人環境で配布確認
+
+### （案）フェーズ6: Web UI（要検討・TODO）
+- ブラウザから音声ファイルをアップロードし、バックエンドAPI（既存パイプラインのラッパー）経由でSRTを生成できるWebフロントエンド。  
+- 具体的な技術スタック（例: FastAPI + React / Next.js）は未決定のため、ここでは **TODOレベルのメモ** として残しておく。  
 
 ---
 

@@ -32,6 +32,11 @@ class LLMSettings:
     pass2_model: str = "gemini-3-pro-preview"
     pass3_model: str = "gemini-2.5-flash"
     pass4_model: str = "gemini-2.5-flash"
+    # Workflow2 用のパス別モデル（未設定時は上記 passX_model を利用）
+    wf2_pass1_model: str | None = None
+    wf2_pass2_model: str | None = None
+    wf2_pass3_model: str | None = None
+    wf2_pass4_model: str | None = None
 
 
 @dataclass(slots=True)
@@ -65,6 +70,11 @@ def get_settings() -> AppSettings:
         pass2_model=_env("LLM_PASS2_MODEL", "gemini-3-pro-preview"),
         pass3_model=_env("LLM_PASS3_MODEL", "gemini-2.5-flash"),
         pass4_model=_env("LLM_PASS4_MODEL", _env("LLM_PASS3_MODEL", "gemini-2.5-flash")),
+        # Workflow2 用（未指定なら passX_model を使用）
+        wf2_pass1_model=_env("LLM_WF2_PASS1_MODEL", _env("LLM_PASS1_MODEL", "gemini-3-pro-preview")),
+        wf2_pass2_model=_env("LLM_WF2_PASS2_MODEL", _env("LLM_PASS2_MODEL", "gemini-3-pro-preview")),
+        wf2_pass3_model=_env("LLM_WF2_PASS3_MODEL", _env("LLM_PASS3_MODEL", "gemini-2.5-flash")),
+        wf2_pass4_model=_env("LLM_WF2_PASS4_MODEL", _env("LLM_PASS4_MODEL", _env("LLM_PASS3_MODEL", "gemini-2.5-flash"))),
     )
     return AppSettings(llm=llm)
 

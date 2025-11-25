@@ -45,6 +45,23 @@ def _normalize_llm_provider(raw: Optional[str]) -> Optional[str]:
     return slug
 
 
+def _normalize_workflow(raw: Optional[str]) -> str:
+    """
+    ワークフロー名を正規化するヘルパー。
+    - None / 空文字は workflow1（従来挙動）にマップ
+    - 未知の値はエラーにする
+    """
+    if raw is None:
+        return "workflow1"
+    slug = raw.strip().lower()
+    if not slug:
+        return "workflow1"
+    allowed = ["workflow1", "workflow2"]
+    if slug not in allowed:
+        raise typer.BadParameter(f"未対応のワークフローです: {slug}. 候補: {allowed}")
+    return slug
+
+
 @app.command()
 def run(
     audio: List[Path] = typer.Argument(None, help='入力音声ファイルへのパス（複数可）。--resume 指定時は省略可'),
@@ -59,6 +76,7 @@ def run(
     llm_temperature: Optional[float] = typer.Option(None, '--llm-temperature', help='LLM整形時のtemperature。未指定ならプロバイダー既定値'),
     llm_timeout: Optional[float] = typer.Option(None, '--llm-timeout', help='LLM APIリクエストのタイムアウト秒数'),
     rewrite: Optional[bool] = typer.Option(None, '--rewrite/--no-rewrite', help='LLM整形で語尾リライトを有効化する'),
+    workflow: Optional[str] = typer.Option(None, '--workflow', help='使用するLLM整形ワークフロー（例: workflow1, workflow2）。未指定なら workflow1'),
     simulate: bool = typer.Option(True, '--simulate/--no-simulate', help='シミュレーションモードを切り替える'),
     verbose: bool = typer.Option(False, '--verbose', help='詳細ログを有効化'),
 ) -> None:
@@ -66,6 +84,7 @@ def run(
     _configure_logging(verbose)
 
     llm_provider = _normalize_llm_provider(llm)
+    workflow_slug = _normalize_workflow(workflow)
 
     # プロファイルが指定されていれば、パスごとのモデル構成をそこから取得する
     pass1_model = pass2_model = pass3_model = pass4_model = None
@@ -93,6 +112,7 @@ def run(
         verbose=verbose,
         llm_provider=llm_provider,
         llm_profile=llm_profile,
+        workflow=workflow_slug,
         llm_pass1_model=pass1_model,
         llm_pass2_model=pass2_model,
         llm_pass3_model=pass3_model,
