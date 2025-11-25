@@ -22,6 +22,7 @@ class GuiController:
         self,
         audio_path: Path,
         *,
+        subtitle_dir: Path | None = None,
         on_start: Callable[[], None] | None = None,
         on_success: Callable[[List[Path]], None] | None = None,
         on_error: Callable[[Exception], None] | None = None,
@@ -35,7 +36,7 @@ class GuiController:
         def worker() -> None:
             self._notify(on_start)
             try:
-                options = self._build_options()
+                options = self._build_options(subtitle_dir=subtitle_dir)
                 # タイムスタンプを固定してGUI側からも出力パスを把握できるようにする
                 options.timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
 
@@ -58,13 +59,13 @@ class GuiController:
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
 
-    def _build_options(self) -> PocRunOptions:
+    def _build_options(self, *, subtitle_dir: Path | None = None) -> PocRunOptions:
         settings = get_settings()
         return PocRunOptions(
             output_dir=Path("temp/poc_samples"),
             progress_dir=Path("temp/progress"),
-            subtitle_dir=Path("output"),
-            simulate=True,
+            subtitle_dir=subtitle_dir or Path("output"),
+            simulate=False,
             llm_provider=settings.llm.default_provider,
             llm_pass1_model=settings.llm.pass1_model,
             llm_pass2_model=settings.llm.pass2_model,

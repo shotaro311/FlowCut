@@ -16,9 +16,11 @@ class MainWindow:
 
         self.controller = GuiController(ui_dispatch=self._dispatch_to_ui)
         self.selected_file: Path | None = None
+        self.output_dir: Path | None = None
 
         self.status_var = tk.StringVar(value="待機中")
         self.file_var = tk.StringVar(value="音声ファイル: 未選択")
+        self.output_dir_var = tk.StringVar(value="保存先フォルダ: output/ （デフォルト）")
         self.output_var = tk.StringVar(value="")
 
         self._build_widgets()
@@ -28,16 +30,23 @@ class MainWindow:
         main_frame.pack(fill=tk.BOTH, expand=True)
 
         file_label = ttk.Label(main_frame, textvariable=self.file_var, anchor=tk.W)
-        file_label.pack(fill=tk.X, pady=(0, 12))
+        file_label.pack(fill=tk.X, pady=(0, 8))
 
         button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X, pady=(0, 12))
+        button_frame.pack(fill=tk.X, pady=(0, 8))
 
         select_button = ttk.Button(button_frame, text="ファイルを選択", command=self.select_file)
         select_button.pack(side=tk.LEFT)
 
         self.run_button = ttk.Button(button_frame, text="実行", command=self.run_pipeline)
         self.run_button.pack(side=tk.LEFT, padx=(8, 0))
+
+        output_frame = ttk.Frame(main_frame)
+        output_frame.pack(fill=tk.X, pady=(0, 12))
+        output_label = ttk.Label(output_frame, textvariable=self.output_dir_var, anchor=tk.W)
+        output_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        select_output_button = ttk.Button(output_frame, text="保存先を変更", command=self.select_output_dir)
+        select_output_button.pack(side=tk.RIGHT)
 
         self.progress = ttk.Progressbar(main_frame, mode="indeterminate")
         self.progress.pack(fill=tk.X, pady=(0, 12))
@@ -59,6 +68,12 @@ class MainWindow:
             self.selected_file = Path(path)
             self.file_var.set(f"音声ファイル: {self.selected_file}")
 
+    def select_output_dir(self) -> None:
+        path = filedialog.askdirectory(title="SRTの保存先フォルダを選択")
+        if path:
+            self.output_dir = Path(path)
+            self.output_dir_var.set(f"保存先フォルダ: {self.output_dir}")
+
     def run_pipeline(self) -> None:
         if not self.selected_file:
             messagebox.showerror("エラー", "音声ファイルを選択してください。")
@@ -71,6 +86,7 @@ class MainWindow:
 
         self.controller.run_pipeline(
             self.selected_file,
+            subtitle_dir=self.output_dir,
             on_start=lambda: None,
             on_success=self._on_success,
             on_error=self._on_error,

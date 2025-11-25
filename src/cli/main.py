@@ -6,8 +6,6 @@ from pathlib import Path
 from typing import List, Optional
 
 import typer
-
-from src.gui.app import run_gui
 from src.pipeline import (
     PocRunOptions,
     ResumeCompletedError,
@@ -37,6 +35,17 @@ def list_available_models() -> None:
 @app.command("gui")
 def launch_gui() -> None:
     """Tkinter ベースの最小GUIを起動する。"""
+    try:
+        # Tkinter / GUI 関連の import は、このコマンド実行時にのみ行う
+        from src.gui.app import run_gui
+    except ImportError as exc:  # _tkinter が無いなど
+        typer.echo(
+            "Tkinter が利用できない Python 環境です（_tkinter モジュールが見つかりません）。\n"
+            "macOS では、python.org 版の Python 3 系をインストールしてから、\n"
+            "その Python で仮想環境を作り直して実行してください。",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
 
     run_gui()
 
@@ -60,6 +69,7 @@ def run(
     language: Optional[str] = typer.Option(None, help='言語コード（例: ja, en）。未指定なら自動判定'),
     chunk_size: Optional[int] = typer.Option(None, help='モデルごとのチャンクサイズ上書き'),
     output_dir: Path = typer.Option(Path('temp/poc_samples'), help='結果を書き出すディレクトリ'),
+    subtitle_dir: Path = typer.Option(Path('output'), help='SRT字幕を書き出すディレクトリ'),
     progress_dir: Path = typer.Option(Path('temp/progress'), help='進捗ファイルの出力ディレクトリ'),
     resume: Optional[Path] = typer.Option(None, help='再開する progress JSON のパス'),
     llm: Optional[str] = typer.Option(None, '--llm', help='使用するLLMプロバイダー（例: openai, google, anthropic）'),
@@ -97,6 +107,7 @@ def run(
         chunk_size=chunk_size,
         output_dir=output_dir,
         progress_dir=progress_dir,
+        subtitle_dir=subtitle_dir,
         simulate=simulate,
         verbose=verbose,
         llm_provider=llm_provider,

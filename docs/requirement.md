@@ -187,10 +187,11 @@ python -m src.cli.main run <音声ファイル> [オプション]
 - `--language ja` / `--chunk-size 30` などは各ランナーへ伝播。
 - `--resume temp/progress_xxx.json` : 途中から再開。
 - `--simulate/--no-simulate` : ランナーのシミュレーション切替（デフォルトON）。
+* `--subtitle-dir ./my_output` : SRT字幕を書き出すディレクトリを指定（未指定時は `output/`）。
 
 #### 出力パス
 - 音声×モデル×実行時刻ごとに `temp/poc_samples/{run_id}.json` を保存（内部的に **最大5件まで** を保持し、古いJSONから自動削除してディスク肥大化を防ぐ）。
-- LLM整形を実行した場合のみ `output/{run_id}.srt` を自動命名で保存（`--output` オプションは存在しない）。
+- LLM整形を実行した場合のみ `{subtitle_dir}/{run_id}.srt` を自動命名で保存（`subtitle_dir` のデフォルトは `output/`、`--subtitle-dir` で変更可能）。
 
 #### 実行例
 ```bash
@@ -225,7 +226,8 @@ python -m src.cli.main run samples/sample_audio.m4a --llm anthropic --rewrite
     *   [ ] **語尾調整・リライトを行う**（デフォルトOFF：原文維持＋フィラー削除のみ）
     *   [ ] **高精度モード**（large-v3モデル使用。OFFの場合はmediumモデルで高速化）
 *   **出力:**
-    *   元の音声ファイルと同じフォルダに `filename_subtitle.srt` を保存。
+    *   デフォルトでは `output/` ディレクトリに `filename_model_timestamp.srt` を保存（CLIと共通）。
+    *   GUI からは「保存先フォルダを選択」ボタンで任意のディレクトリを指定できる。
     *   完了時に通知を表示
 
 ## 5. プロンプト設計案（コアロジック）
