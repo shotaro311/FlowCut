@@ -43,6 +43,7 @@ class PocRunOptions:
     resume_source: Path | None = None
     llm_provider: str | None = None
     llm_profile: str | None = None
+    workflow: str = "workflow1"
     llm_pass1_model: str | None = None
     llm_pass2_model: str | None = None
     llm_pass3_model: str | None = None
@@ -139,6 +140,7 @@ def execute_poc_run(
                         pass2_model=options.llm_pass2_model,
                         pass3_model=options.llm_pass3_model,
                         pass4_model=options.llm_pass4_model,
+                        workflow=options.workflow,
                         run_id=run_id,
                         source_name=audio_path.name,
                     )
@@ -304,6 +306,7 @@ def prepare_resume_run(
         resume_source=progress_path,
         llm_provider=base_options.llm_provider or option_meta.get("llm_provider"),
         llm_profile=option_meta.get("llm_profile"),
+        workflow=option_meta.get("workflow", base_options.workflow),
         llm_pass1_model=option_meta.get("llm_pass1_model"),
         llm_pass2_model=option_meta.get("llm_pass2_model"),
         llm_pass3_model=option_meta.get("llm_pass3_model"),
@@ -402,6 +405,7 @@ def _build_progress_metadata(
         "simulate": options.simulate,
         "llm_provider": options.llm_provider,
         "llm_profile": options.llm_profile,
+        "workflow": options.workflow,
         "llm_pass1_model": options.llm_pass1_model,
         "llm_pass2_model": options.llm_pass2_model,
         "llm_pass3_model": options.llm_pass3_model,
