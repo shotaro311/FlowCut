@@ -41,4 +41,4 @@
 ## 次に触るときのチェックリスト
 - `.env` のキーとモデル名が有効か（特に `OPENAI_WHISPER_MODEL`）。
 - `temp/` の肥大化は `cleanup` サブコマンドで掃除。
-- 長尺サンプルを受領したら、3モデルで実行して `reports/poc_whisper_metrics.csv` を更新。行分割は two-pass の出力を使用し、アライン調整は不要。
+- 長尺サンプルを受領したら、2モデル（mlx / openai）で実行して `reports/poc_whisper_metrics.csv` を更新。行分割は two-pass の出力を使用し、アライン調整は不要。

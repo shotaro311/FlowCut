@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Callable, Iterable, List, Sequence
 
 from src.config.settings import get_settings
+from src.llm.profiles import get_profile
 from src.pipeline import PocRunOptions, ensure_audio_files, execute_poc_run, resolve_models
 
 UiCallback = Callable[[], None]
@@ -23,6 +24,12 @@ class GuiController:
         audio_path: Path,
         *,
         subtitle_dir: Path | None = None,
+        llm_provider: str | None = None,
+        llm_profile: str | None = None,
+        pass1_model: str | None = None,
+        pass2_model: str | None = None,
+        pass3_model: str | None = None,
+        pass4_model: str | None = None,
         on_start: Callable[[], None] | None = None,
         on_success: Callable[[List[Path]], None] | None = None,
         on_error: Callable[[Exception], None] | None = None,
@@ -36,7 +43,15 @@ class GuiController:
         def worker() -> None:
             self._notify(on_start)
             try:
-                options = self._build_options(subtitle_dir=subtitle_dir)
+                options = self._build_options(
+                    subtitle_dir=subtitle_dir,
+                    llm_provider=llm_provider,
+                    llm_profile=llm_profile,
+                    pass1_model=pass1_model,
+                    pass2_model=pass2_model,
+                    pass3_model=pass3_model,
+                    pass4_model=pass4_model,
+                )
                 # タイムスタンプを固定してGUI側からも出力パスを把握できるようにする
                 options.timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
 
@@ -59,18 +74,62 @@ class GuiController:
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
 
-    def _build_options(self, *, subtitle_dir: Path | None = None) -> PocRunOptions:
+    def _build_options(
+        self,
+        *,
+        subtitle_dir: Path | None = None,
+        llm_provider: str | None = None,
+        llm_profile: str | None = None,
+        pass1_model: str | None = None,
+        pass2_model: str | None = None,
+        pass3_model: str | None = None,
+        pass4_model: str | None = None,
+    ) -> PocRunOptions:
+        """GUIから渡された設定と環境値を組み合わせてPocRunOptionsを構築する。
+
+        優先順位イメージ:
+        1. GUIの詳細設定（pass1〜4モデル）
+        2. プロファイル定義（llm_profile）
+        3. 環境変数ベースのデフォルト設定（settings.llm）
+        """
         settings = get_settings()
+
+        # ベースは環境変数
+        provider = llm_provider or settings.llm.default_provider
+        p1 = pass1_model
+        p2 = pass2_model
+        p3 = pass3_model
+        p4 = pass4_model
+
+        # プロファイルが指定されていればそこから補完
+        if llm_profile:
+            profile = get_profile(llm_profile)
+            if profile is not None:
+                # プロバイダー未指定ならプロファイル側を採用
+                if not llm_provider and profile.provider:
+                    provider = profile.provider
+                p1 = p1 or profile.pass1_model
+                p2 = p2 or profile.pass2_model
+                p3 = p3 or profile.pass3_model
+                p4 = p4 or profile.pass4_model
+
+        # それでも未設定の箇所は環境設定から埋める
+        p1 = p1 or settings.llm.pass1_model
+        p2 = p2 or settings.llm.pass2_model
+        p3 = p3 or settings.llm.pass3_model
+        p4 = p4 or settings.llm.pass4_model
+
         return PocRunOptions(
             output_dir=Path("temp/poc_samples"),
             progress_dir=Path("temp/progress"),
             subtitle_dir=subtitle_dir or Path("output"),
             simulate=False,
-            llm_provider=settings.llm.default_provider,
-            llm_pass1_model=settings.llm.pass1_model,
-            llm_pass2_model=settings.llm.pass2_model,
-            llm_pass3_model=settings.llm.pass3_model,
-            llm_pass4_model=settings.llm.pass4_model,
+            llm_provider=provider,
+            llm_profile=llm_profile,
+            llm_pass1_model=p1,
+            llm_pass2_model=p2,
+            llm_pass3_model=p3,
+            llm_pass4_model=p4,
             llm_timeout=settings.llm.request_timeout,
         )
 

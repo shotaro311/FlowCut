@@ -66,5 +66,12 @@ def get_profile(name: str) -> Optional[LlmProfile]:
     return profiles.get(name)
 
 
-__all__ = ["LlmProfile", "get_profile"]
+def list_profiles() -> Dict[str, LlmProfile]:
+    """利用可能な LLM プロファイル一覧を返す（name → LlmProfile）。
 
+    GUI などでプリセット一覧を表示する用途を想定。
+    """
+    return dict(_load_profiles())
+
+
+__all__ = ["LlmProfile", "get_profile", "list_profiles"]

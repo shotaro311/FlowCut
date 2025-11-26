@@ -5,6 +5,8 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from src.llm import available_providers
+from src.llm.profiles import get_profile, list_profiles
 from src.gui.controller import GuiController
 
 
@@ -12,16 +14,38 @@ class MainWindow:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Flow Cut GUI (Phase 1)")
-        self.root.geometry("480x260")
+        self.root.geometry("520x360")
 
         self.controller = GuiController(ui_dispatch=self._dispatch_to_ui)
         self.selected_file: Path | None = None
         self.output_dir: Path | None = None
 
+        # 状態表示用の変数
         self.status_var = tk.StringVar(value="待機中")
         self.file_var = tk.StringVar(value="音声ファイル: 未選択")
         self.output_dir_var = tk.StringVar(value="保存先フォルダ: output/ （デフォルト）")
         self.output_var = tk.StringVar(value="")
+
+        # LLM関連（プリセット＋詳細設定）
+        self.llm_provider_var = tk.StringVar()
+        self.llm_profile_var = tk.StringVar()
+        self.pass1_model_var = tk.StringVar()
+        self.pass2_model_var = tk.StringVar()
+        self.pass3_model_var = tk.StringVar()
+        self.pass4_model_var = tk.StringVar()
+        self.advanced_visible = tk.BooleanVar(value=False)
+
+        # プロバイダー・プロファイル定義をロード
+        self._providers = available_providers()
+        self._profiles = list_profiles()
+        if self._providers:
+            # 先頭のプロバイダーを初期値とする
+            self.llm_provider_var.set(self._providers[0])
+        if self._profiles:
+            # default があればそれを優先
+            initial_profile = "default" if "default" in self._profiles else sorted(self._profiles.keys())[0]
+            self.llm_profile_var.set(initial_profile)
+            self._apply_profile_to_pass_models(initial_profile)
 
         self._build_widgets()
 
@@ -47,6 +71,66 @@ class MainWindow:
         output_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
         select_output_button = ttk.Button(output_frame, text="保存先を変更", command=self.select_output_dir)
         select_output_button.pack(side=tk.RIGHT)
+
+        # モデルプリセット＋詳細設定
+        options_frame = ttk.LabelFrame(main_frame, text="LLMオプション（プリセット＋詳細設定）")
+        options_frame.pack(fill=tk.BOTH, expand=False, pady=(0, 12))
+
+        # プロバイダー選択
+        provider_row = ttk.Frame(options_frame)
+        provider_row.pack(fill=tk.X, pady=(4, 2))
+        ttk.Label(provider_row, text="LLMプロバイダー:").pack(side=tk.LEFT)
+        provider_combo = ttk.Combobox(
+            provider_row,
+            textvariable=self.llm_provider_var,
+            values=list(self._providers),
+            state="readonly",
+            width=16,
+        )
+        provider_combo.pack(side=tk.LEFT, padx=(4, 0))
+
+        # プロファイル（プリセット）選択
+        profile_row = ttk.Frame(options_frame)
+        profile_row.pack(fill=tk.X, pady=(2, 2))
+        ttk.Label(profile_row, text="モデルプリセット:").pack(side=tk.LEFT)
+        profile_names = sorted(self._profiles.keys())
+        profile_combo = ttk.Combobox(
+            profile_row,
+            textvariable=self.llm_profile_var,
+            values=profile_names,
+            state="readonly",
+            width=16,
+        )
+        profile_combo.pack(side=tk.LEFT, padx=(4, 0))
+        profile_combo.bind("<<ComboboxSelected>>", self._on_profile_changed)
+
+        # 詳細設定トグル
+        advanced_row = ttk.Frame(options_frame)
+        advanced_row.pack(fill=tk.X, pady=(2, 2))
+        advanced_check = ttk.Checkbutton(
+            advanced_row,
+            text="詳細設定（Passごとのモデル名を直接指定）",
+            variable=self.advanced_visible,
+            command=self._toggle_advanced,
+        )
+        advanced_check.pack(side=tk.LEFT)
+
+        # 詳細設定エリア（初期は非表示）
+        self.advanced_frame = ttk.Frame(options_frame)
+        # Pass1〜4用の入力欄
+        for idx, (label_text, var) in enumerate(
+            [
+                ("Pass1モデル:", self.pass1_model_var),
+                ("Pass2モデル:", self.pass2_model_var),
+                ("Pass3モデル:", self.pass3_model_var),
+                ("Pass4モデル:", self.pass4_model_var),
+            ]
+        ):
+            row = ttk.Frame(self.advanced_frame)
+            row.pack(fill=tk.X, pady=(2 if idx == 0 else 1, 1))
+            ttk.Label(row, text=label_text, width=10).pack(side=tk.LEFT)
+            entry = ttk.Entry(row, textvariable=var)
+            entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         self.progress = ttk.Progressbar(main_frame, mode="indeterminate")
         self.progress.pack(fill=tk.X, pady=(0, 12))
@@ -75,6 +159,8 @@ class MainWindow:
             self.output_dir_var.set(f"保存先フォルダ: {self.output_dir}")
 
     def run_pipeline(self) -> None:
+        # デバッグ用ログ（GUIコマンドが呼ばれているか確認）
+        print("[gui] run_pipeline called, selected_file=", self.selected_file)
         if not self.selected_file:
             messagebox.showerror("エラー", "音声ファイルを選択してください。")
             return
@@ -87,6 +173,12 @@ class MainWindow:
         self.controller.run_pipeline(
             self.selected_file,
             subtitle_dir=self.output_dir,
+            llm_provider=self.llm_provider_var.get() or None,
+            llm_profile=self.llm_profile_var.get() or None,
+            pass1_model=self.pass1_model_var.get().strip() or None,
+            pass2_model=self.pass2_model_var.get().strip() or None,
+            pass3_model=self.pass3_model_var.get().strip() or None,
+            pass4_model=self.pass4_model_var.get().strip() or None,
             on_start=lambda: None,
             on_success=self._on_success,
             on_error=self._on_error,
@@ -112,6 +204,32 @@ class MainWindow:
 
     def _dispatch_to_ui(self, func) -> None:
         self.root.after(0, func)
+
+    # --- LLMプリセット / 詳細設定用のヘルパー ---
+
+    def _apply_profile_to_pass_models(self, profile_name: str) -> None:
+        """プロファイルを読み込み、詳細欄のPass1〜4モデルに反映する（空なら触らない）。"""
+        profile = get_profile(profile_name)
+        if profile is None:
+            return
+        # 既存入力を壊しすぎないように、空欄のときだけ埋める運用もあり得るが、
+        # ここではプリセット変更時に一括で上書きする。
+        self.pass1_model_var.set(profile.pass1_model or "")
+        self.pass2_model_var.set(profile.pass2_model or "")
+        self.pass3_model_var.set(profile.pass3_model or "")
+        self.pass4_model_var.set(profile.pass4_model or "")
+
+    def _on_profile_changed(self, _event: object) -> None:
+        name = self.llm_profile_var.get()
+        if name:
+            self._apply_profile_to_pass_models(name)
+
+    def _toggle_advanced(self) -> None:
+        """詳細設定エリアの表示/非表示を切り替える。"""
+        if self.advanced_visible.get():
+            self.advanced_frame.pack(fill=tk.X, pady=(4, 2))
+        else:
+            self.advanced_frame.pack_forget()
 
 
 def run_gui() -> None:

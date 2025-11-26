@@ -8,8 +8,8 @@
 
 ## 2. 技術スタック
 
-### 音声認識（3モデルで比較検証）
-プロトタイプで3つのモデルを実装。**デフォルトは mlx-whisper large-v3（MLX版）** とする（Plan方針）。
+### 音声認識（2モデルで比較検証）
+プロトタイプでは以下2つのモデルを実装。**デフォルトは mlx-whisper large-v3（MLX版）** とする（Plan方針）。
 
 *   **モデル1: mlx-whisper large-v3（汎用×MLX最適化｜デフォルト）**
     *   リポジトリ: `mlx-community/whisper-large-v3-mlx`
@@ -17,12 +17,7 @@
     *   word-levelタイムスタンプ対応
     *   **期待値**: 最高精度（専門用語・複雑な内容）
 
-*   **モデル2: kotoba-whisper-v2.0-mlx（日本語特化×MLX最適化）**
-    *   リポジトリ: `kaiinui/kotoba-whisper-v2.0-mlx`
-    *   distil-large-v3ベース / ReazonSpeech 720万クリップ
-    *   **期待値**: 日本語で高速・高精度
-
-*   **モデル3: OpenAI Whisper large-v3（公式実装）**
+*   **モデル2: OpenAI Whisper large-v3（公式実装）**
     *   リポジトリ: `openai/whisper`
     *   MPS（Metal Performance Shaders）対応
     *   word-levelタイムスタンプ対応
@@ -223,6 +218,12 @@ python -m src.cli.main run samples/sample_audio.m4a --llm anthropic --rewrite
     *   **実行ボタン**
     *   **進捗バー:** 「音声解析中...」「AI思考中...」「ファイル生成中」などのステータス表示。
 *   **オプション設定（トグルスイッチ等）:**
+    *   [ ] **モデルプリセット選択**（例: `default` / `low_cost` / `high_quality`）  
+        - 内部的には `config/llm_profiles.json` に定義した LLMプロファイルを選択し、Pass1〜4 のモデルをまとめて変更する。  
+        - 友人はプリセット名だけを意識すればよい想定。
+    *   [ ] **詳細モード（上級者向け）**  
+        - GUI上の折りたたみセクションで、Pass1〜Pass4 のモデル名をテキスト入力で個別に上書きできる。  
+        - CLIの `--llm-profile` と `LLM_PASS*_MODEL` 相当の設定をGUIから調整できるイメージ。
     *   [ ] **語尾調整・リライトを行う**（デフォルトOFF：原文維持＋フィラー削除のみ）
     *   [ ] **高精度モード**（large-v3モデル使用。OFFの場合はmediumモデルで高速化）
 *   **出力:**
