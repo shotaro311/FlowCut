@@ -6,7 +6,7 @@ from datetime import datetime
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Sequence, Tuple, Callable
 import time
 
 from src.llm.two_pass import TwoPassFormatter, TwoPassResult
@@ -50,6 +50,7 @@ class PocRunOptions:
     rewrite: bool | None = None
     llm_temperature: float | None = None
     llm_timeout: float | None = None
+    progress_callback: Callable[[str, int], None] | None = None
 
     def normalized_timestamp(self) -> str:
         # ファイル名の衝突を避けるため、秒まで含めたタイムスタンプを使用（例: 20251124T125830）
@@ -109,6 +110,9 @@ def execute_poc_run(
         logger.info("=== %s (%s) ===", slug, runner.display_name)
         runner.prepare(config)
         for audio_path in audio_files:
+            # Phase 1: Whisper transcription
+            if options.progress_callback:
+                options.progress_callback("Whisper文字起こし", 20)
             t_run_start = time.perf_counter()
             t_transcribe_start = time.perf_counter()
             result = runner.transcribe(audio_path, config)
@@ -142,12 +146,16 @@ def execute_poc_run(
                         run_id=run_id,
                         source_name=audio_path.name,
                     )
+                    # Phase 2-5: LLM passes
                     t_llm_start = time.perf_counter()
                     try:
+                        if options.progress_callback:
+                            options.progress_callback("LLM Pass 1", 40)
                         tp_result: TwoPassResult | None = two_pass.run(
                             text=result.text,
                             words=result.words or [],
                             max_chars=17.0,
+                            progress_callback=options.progress_callback,
                         )
                         if tp_result:
                             subtitle_text = tp_result.srt_text
@@ -211,6 +219,9 @@ def execute_poc_run(
                     )
                 except Exception as exc:  # pragma: no cover - メトリクス書き込み失敗は致命的でない
                     logger.warning("メトリクスファイルの出力に失敗しました: %s", exc)
+            # Mark completion
+            if options.progress_callback:
+                options.progress_callback("完了", 100)
             saved_paths.append(output_path)
     return saved_paths
 

@@ -7,9 +7,9 @@ import re
 import uuid
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Sequence, Dict, Any, Iterable
+from typing import List, Sequence, Dict, Any, Iterable, Callable
 
 from src.config import get_settings
 from src.llm.formatter import FormatterError, get_provider, FormatterRequest
@@ -70,7 +70,7 @@ def _log_raw_response(pass_label: str, raw: str) -> None:
     """
     try:
         RAW_LOG_DIR.mkdir(parents=True, exist_ok=True)
-        ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         fname = RAW_LOG_DIR / f"{pass_label}_{ts}_{uuid.uuid4().hex[:8]}.txt"
         fname.write_text(raw, encoding="utf-8")
         logger.debug("Saved raw LLM response for %s to %s (len=%d)", pass_label, fname, len(raw))
@@ -203,7 +203,7 @@ class TwoPassFormatter:
         self.run_id = run_id
         self.source_name = source_name
         self._log_buffer: Dict[str, str] = {}
-        self._log_date_str = datetime.utcnow().strftime("%Y%m%d")
+        self._log_date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
         self._log_written = False
 
     # --- logging helpers -------------------------------------------------
@@ -277,6 +277,7 @@ class TwoPassFormatter:
         *,
         max_chars: float = 17.0,
         enable_pass3: bool = True,
+        progress_callback: Callable[[str, int], None] | None = None,
     ) -> TwoPassResult | None:
         if not words:
             raise FormatterError("wordタイムスタンプが空です")
@@ -306,6 +307,8 @@ class TwoPassFormatter:
 
             logger.info("two-pass: pass2 start (words=%d)", len(updated_words))
             # Pass2: line splits
+            if progress_callback:
+                progress_callback("LLM Pass 2", 60)
             pass2_prompt = self._build_pass2_prompt(updated_words, max_chars=max_chars)
             logger.debug("Calling LLM for Pass 2. Prompt length: %d", len(pass2_prompt))
             t_p2_start = time.perf_counter()
@@ -334,6 +337,8 @@ class TwoPassFormatter:
             for issue in issues:
                 logger.debug("  - %s", issue.description)
 
+            if progress_callback:
+                progress_callback("LLM Pass 3", 80)
             pass3_prompt = self._build_pass3_prompt(lines, updated_words, issues)
             logger.debug("Calling LLM for Pass 3. Prompt length: %d", len(pass3_prompt))
             t_p3_start = time.perf_counter()
@@ -359,6 +364,9 @@ class TwoPassFormatter:
 
             # Pass4: re-run only lines that violate length bounds
             fixed_lines: List[LineRange] = []
+            pass4_needed = any(self._needs_pass4(line) for line in lines)
+            if pass4_needed and progress_callback:
+                progress_callback("LLM Pass 4", 95)
             for line in lines:
                 if self._needs_pass4(line):
                     logger.info("pass4: line length %d out of bounds, retrying LLM", len(line.text))
@@ -479,7 +487,7 @@ class TwoPassFormatter:
             f"1. 助詞・接続表現・終助詞での分割を避ける（上記ルール参照）\n"
             f"2. 文字数オーバー: 現バッファ＋次チャンクが{int(max_chars)}文字を超える場合のみ改行\n"
             f"3. 文脈区切り: {int(max_chars)}文字以内でも、読点・強い切れ目（〜ます、〜です、〜だ等）で終わるなら改行を検討\n"
-            "4. 最小行長チェック: 分割後の行が4文字未満にならないか確認（3文字以下は禁止）\n\n"
+            "4. 最小行長チェック: 分割後の行が5文字未満にならないか確認（4文字以下は禁止）\n\n"
             "## Step 3: クリーニング (Cleaning)\n"
             "行末の句読点（、。）を削除。文中の句読点は残してよい。\n\n"
             "# Input\n"
