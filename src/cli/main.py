@@ -39,12 +39,12 @@ def launch_gui() -> None:
         # Tkinter / GUI 関連の import は、このコマンド実行時にのみ行う
         from src.gui.app import run_gui
     except ImportError as exc:  # _tkinter が無いなど
-        typer.echo(
+        message = (
             "Tkinter が利用できない Python 環境です（_tkinter モジュールが見つかりません）。\n"
             "macOS では、python.org 版の Python 3 系をインストールしてから、\n"
-            "その Python で仮想環境を作り直して実行してください。",
-            err=True,
+            "その Python で仮想環境を作り直して実行してください。"
         )
+        typer.echo(message, err=True)
         raise typer.Exit(code=1) from exc
 
     run_gui()
