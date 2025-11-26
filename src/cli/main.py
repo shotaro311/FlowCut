@@ -6,8 +6,6 @@ from pathlib import Path
 from typing import List, Optional
 
 import typer
-
-from src.gui.app import run_gui
 from src.pipeline import (
     PocRunOptions,
     ResumeCompletedError,
@@ -37,6 +35,8 @@ def list_available_models() -> None:
 @app.command("gui")
 def launch_gui() -> None:
     """Tkinter ベースの最小GUIを起動する。"""
+
+    from src.gui.app import run_gui
 
     run_gui()
 
