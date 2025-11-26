@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import threading
 from datetime import datetime
+import time
 from pathlib import Path
 from typing import Callable, Iterable, List, Sequence
 
@@ -31,7 +32,7 @@ class GuiController:
         pass3_model: str | None = None,
         pass4_model: str | None = None,
         on_start: Callable[[], None] | None = None,
-        on_success: Callable[[List[Path]], None] | None = None,
+        on_success: Callable[[List[Path], dict | None], None] | None = None,
         on_error: Callable[[Exception], None] | None = None,
         on_finish: Callable[[], None] | None = None,
     ) -> None:
@@ -55,9 +56,13 @@ class GuiController:
                 # タイムスタンプを固定してGUI側からも出力パスを把握できるようにする
                 options.timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
 
+                t_start = time.perf_counter()
                 audio_files = ensure_audio_files([audio_path])
                 model_slugs = resolve_models(None)
                 result_paths = execute_poc_run(audio_files, model_slugs, options)
+                t_end = time.perf_counter()
+                elapsed_sec = max(0.0, t_end - t_start)
+
                 output_paths = self._collect_output_paths(
                     audio_path=audio_path,
                     model_slugs=model_slugs,
@@ -65,7 +70,13 @@ class GuiController:
                     options=options,
                     base_paths=result_paths,
                 )
-                self._notify(on_success, output_paths)
+                metrics_summary = self._collect_metrics_summary(
+                    audio_path=audio_path,
+                    model_slugs=model_slugs,
+                    timestamp=options.timestamp,
+                    total_elapsed_sec=elapsed_sec,
+                )
+                self._notify(on_success, output_paths, metrics_summary)
             except Exception as exc:  # pragma: no cover - GUI通知のみ
                 self._notify(on_error, exc)
             finally:
@@ -150,6 +161,64 @@ class GuiController:
             if srt_path.exists():
                 collected.append(srt_path)
         return collected
+
+    def _collect_metrics_summary(
+        self,
+        *,
+        audio_path: Path,
+        model_slugs: Sequence[str],
+        timestamp: str | None,
+        total_elapsed_sec: float,
+    ) -> dict | None:
+        """logs/metrics 配下のメトリクスを集計し、GUI向けの簡易サマリを返す。
+
+        - 総トークン数（Pass1〜4・全モデルの合計）
+        - 概算APIコスト（USD, run_total_cost_usd の合計）
+        - 総処理時間（秒）
+        """
+        if not timestamp:
+            return {
+                "total_tokens": 0,
+                "total_cost_usd": 0.0,
+                "total_elapsed_sec": total_elapsed_sec,
+            }
+
+        metrics_root = Path("logs/metrics")
+        if not metrics_root.exists():
+            return {
+                "total_tokens": 0,
+                "total_cost_usd": 0.0,
+                "total_elapsed_sec": total_elapsed_sec,
+            }
+
+        total_tokens = 0
+        total_cost = 0.0
+
+        # ファイル名フォーマットは usage_metrics.write_run_metrics_file を参照
+        # {audio_file.name}_{date_str}_{run_id}_metrics.json
+        for slug in model_slugs:
+            run_id = f"{audio_path.stem}_{slug}_{timestamp}"
+            pattern = f"{audio_path.name}_*_{run_id}_metrics.json"
+            for path in metrics_root.glob(pattern):
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                llm_tokens = data.get("llm_tokens") or {}
+                if isinstance(llm_tokens, dict):
+                    for entry in llm_tokens.values():
+                        if not isinstance(entry, dict):
+                            continue
+                        total_tokens += int(entry.get("total_tokens") or 0)
+                cost = data.get("run_total_cost_usd")
+                if isinstance(cost, (int, float)):
+                    total_cost += float(cost)
+
+        return {
+            "total_tokens": total_tokens,
+            "total_cost_usd": total_cost,
+            "total_elapsed_sec": total_elapsed_sec,
+        }
 
     def _notify(self, callback: Callable[..., None] | None, *args, **kwargs) -> None:
         if callback is None:

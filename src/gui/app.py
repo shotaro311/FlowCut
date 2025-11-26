@@ -24,6 +24,7 @@ class MainWindow:
         self.file_var = tk.StringVar(value="音声ファイル: 未選択")
         self.output_dir_var = tk.StringVar(value="保存先フォルダ: output/ （デフォルト）")
         self.output_var = tk.StringVar(value="")
+        self.metrics_var = tk.StringVar(value="")  # 総トークン数・コスト・処理時間表示用
 
         # LLM関連（プリセット＋詳細設定）
         self.llm_provider_var = tk.StringVar()
@@ -34,8 +35,7 @@ class MainWindow:
         self.pass4_model_var = tk.StringVar()
         self.advanced_visible = tk.BooleanVar(value=False)
 
-        # プロバイダー・プロファイル定義をロード
-        self._providers = available_providers()
+        # プロファイル定義をロード（プロバイダーはプロファイル側の設定に従う）
         self._profiles = list_profiles()
         # プロファイルからプロバイダー別の既知モデル一覧を作る
         self._models_by_provider = list_models_by_provider()
@@ -145,7 +145,10 @@ class MainWindow:
         ttk.Label(status_row, textvariable=self.status_var).pack(side=tk.LEFT, padx=(4, 0))
 
         self.output_label = ttk.Label(main_frame, textvariable=self.output_var, foreground="#0b4f6c")
-        self.output_label.pack(fill=tk.X)
+        self.output_label.pack(fill=tk.X, pady=(0, 2))
+
+        self.metrics_label = ttk.Label(main_frame, textvariable=self.metrics_var, foreground="#555555")
+        self.metrics_label.pack(fill=tk.X)
 
     def select_file(self) -> None:
         path = filedialog.askopenfilename(
@@ -189,10 +192,21 @@ class MainWindow:
             on_finish=self._on_finish,
         )
 
-    def _on_success(self, output_paths: list[Path]) -> None:
+    def _on_success(self, output_paths: list[Path], metrics: dict | None) -> None:
         self.status_var.set("完了しました")
         if output_paths:
             self.output_var.set(f"出力: {output_paths[-1]}")
+        # メトリクスサマリの表示
+        if metrics:
+            total_tokens = metrics.get("total_tokens") or 0
+            total_cost = float(metrics.get("total_cost_usd") or 0.0)
+            elapsed_sec = float(metrics.get("total_elapsed_sec") or 0.0)
+            time_str = self._format_elapsed(elapsed_sec)
+            self.metrics_var.set(
+                f"総トークン数: {int(total_tokens)} / 概算APIコスト: ${total_cost:.3f} / 総処理時間: {time_str}"
+            )
+        else:
+            self.metrics_var.set("")
 
     def _on_error(self, exc: Exception) -> None:
         self.status_var.set("エラーが発生しました")
@@ -215,6 +229,13 @@ class MainWindow:
         provider = self.llm_provider_var.get() or ""
         models = sorted(self._models_by_provider.get(provider, set()))
         return models
+
+    def _format_elapsed(self, seconds: float) -> str:
+        total = int(round(max(0.0, seconds)))
+        minutes, sec = divmod(total, 60)
+        if minutes > 0:
+            return f"{minutes}分{sec}秒"
+        return f"{sec}秒"
 
     def _apply_profile_to_pass_models(self, profile_name: str) -> None:
         """プロファイルを読み込み、詳細欄のPass1〜4モデルに反映する（空なら触らない）。"""
