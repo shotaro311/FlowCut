@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Set, List
 import json
 import logging
+import sys
 
 logger = logging.getLogger(__name__)
 
@@ -23,13 +24,32 @@ class LlmProfile:
 _PROFILE_CACHE: Dict[str, LlmProfile] | None = None
 
 
+def _get_profiles_json_path() -> Path:
+    """llm_profiles.json のパスを解決する。"""
+    # 1. PyInstaller バンドル時: _MEIPASS/config/llm_profiles.json
+    base = getattr(sys, "_MEIPASS", None)
+    if base is not None:
+        bundled_candidate = Path(str(base)) / "config" / "llm_profiles.json"
+        if bundled_candidate.exists():
+            return bundled_candidate
+
+    # 2. リポジトリルート想定: このファイルからの相対 ../.. /config/llm_profiles.json
+    here = Path(__file__).resolve().parent
+    repo_candidate = here.parent.parent / "config" / "llm_profiles.json"
+    if repo_candidate.exists():
+        return repo_candidate
+
+    # 3. フォールバック: カレントディレクトリ配下
+    return Path("config/llm_profiles.json")
+
+
 def _load_profiles() -> Dict[str, LlmProfile]:
     """config/llm_profiles.json を読み込み、名前→LlmProfile の辞書に変換する。"""
     global _PROFILE_CACHE
     if _PROFILE_CACHE is not None:
         return _PROFILE_CACHE
 
-    path = Path("config/llm_profiles.json")
+    path = _get_profiles_json_path()
     if not path.exists():
         logger.warning("LLMプロファイル定義が見つかりません: %s", path)
         _PROFILE_CACHE = {}
@@ -81,7 +101,7 @@ def list_models_by_provider() -> Dict[str, Set[str]]:
     1. config/llm_profiles.json の `models` セクション
     2. プロファイル定義からの自動集約（後方互換用）
     """
-    path = Path("config/llm_profiles.json")
+    path = _get_profiles_json_path()
     by_provider: Dict[str, Set[str]] = {}
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))

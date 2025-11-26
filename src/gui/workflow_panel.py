@@ -353,6 +353,25 @@ class WorkflowPanel(ttk.Frame):
         self.pass4_model_var.set(profile.pass4_model or "")
         self._refresh_advanced_model_choices()
 
+    def reload_llm_profiles(self) -> None:
+        """LLMプロファイルとモデル一覧を再読み込みする。"""
+        self._profiles = list_profiles()
+        self._models_by_provider = list_models_by_provider()
+        current_profile = self.llm_profile_var.get()
+        if current_profile and current_profile in self._profiles:
+            provider = self._profiles[current_profile].provider or "google"
+            self.llm_provider_var.set(provider)
+            self._apply_profile_to_pass_models(current_profile)
+        elif self._profiles:
+            initial_profile = "default" if "default" in self._profiles else sorted(self._profiles.keys())[0]
+            self.llm_profile_var.set(initial_profile)
+            provider = self._profiles[initial_profile].provider or "google"
+            self.llm_provider_var.set(provider)
+            self._apply_profile_to_pass_models(initial_profile)
+        else:
+            self.llm_provider_var.set("")
+        self._refresh_advanced_model_choices()
+
     def _refresh_advanced_model_choices(self) -> None:
         """詳細設定のモデル選択肢を更新する。"""
         models = self._get_models_for_current_provider()

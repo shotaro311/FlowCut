@@ -1,10 +1,12 @@
 """Tkinter-based minimal GUI to run the existing CLI pipeline."""
 from __future__ import annotations
 
+import os
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
 
+from src.config import reload_settings
 from src.gui.config import get_config
 from src.gui.controller import GuiController
 from src.gui.workflow_panel import WorkflowPanel
@@ -18,6 +20,7 @@ class MainWindow:
         
         # 設定マネージャー
         self.config = get_config()
+        self._apply_api_settings_from_config()
         
         # コントローラー
         self.controller = GuiController(ui_dispatch=self._dispatch_to_ui)
@@ -49,7 +52,14 @@ class MainWindow:
             text="最大2つのワークフローを同時実行できます",
             foreground="#666666"
         )
-        info_label.pack(side=tk.RIGHT)
+        info_label.pack(side=tk.LEFT, padx=(16, 0))
+
+        api_button = ttk.Button(
+            header_frame,
+            text="API設定",
+            command=self._open_api_settings_dialog,
+        )
+        api_button.pack(side=tk.RIGHT)
         
         # ワークフローパネル用のスクロール可能なフレーム
         self.workflow_frame = ttk.Frame(main_frame)
@@ -61,6 +71,18 @@ class MainWindow:
         
         # 終了時の確認設定
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
+
+    def _apply_api_settings_from_config(self) -> None:
+        """設定ファイルからAPIキーなどを環境変数に反映する。"""
+        google_key = self.config.get_google_api_key()
+        if google_key:
+            os.environ["GOOGLE_API_KEY"] = google_key
+        reload_settings()
+
+    def _reload_llm_profiles_in_workflows(self) -> None:
+        """すべてのワークフローパネルでLLMプロファイルを再読み込みする。"""
+        for panel in self.workflow_panels.values():
+            panel.reload_llm_profiles()
 
     def _setup_workflows(self) -> None:
         """ワークフローパネルをセットアップする。"""
@@ -95,6 +117,50 @@ class MainWindow:
                 return
         
         self.root.destroy()
+
+    def _open_api_settings_dialog(self) -> None:
+        """Google APIキーの設定ダイアログを開く。"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("API設定")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        frame = ttk.Frame(dialog, padding=16)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frame, text="Google APIキー:").grid(row=0, column=0, sticky=tk.W)
+
+        current_key = self.config.get_google_api_key() or ""
+        var = tk.StringVar(value=current_key)
+        entry = ttk.Entry(frame, textvariable=var, show="*")
+        entry.grid(row=0, column=1, sticky=tk.EW, padx=(8, 0))
+        frame.columnconfigure(1, weight=1)
+
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=1, column=0, columnspan=2, pady=(12, 0), sticky=tk.E)
+
+        def on_save() -> None:
+            key = var.get().strip()
+            if not key:
+                messagebox.showerror("エラー", "Google APIキーを入力してください。")
+                return
+            self.config.set_google_api_key(key)
+            os.environ["GOOGLE_API_KEY"] = key
+            reload_settings()
+            self._reload_llm_profiles_in_workflows()
+            messagebox.showinfo("情報", "Google APIキーを保存しました。")
+            dialog.destroy()
+
+        def on_cancel() -> None:
+            dialog.destroy()
+
+        save_button = ttk.Button(button_frame, text="保存", command=on_save)
+        save_button.pack(side=tk.RIGHT)
+
+        cancel_button = ttk.Button(button_frame, text="キャンセル", command=on_cancel)
+        cancel_button.pack(side=tk.RIGHT, padx=(0, 8))
+
+        entry.focus_set()
 
 
 def run_gui() -> None:
