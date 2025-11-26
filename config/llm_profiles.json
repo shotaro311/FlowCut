@@ -2,17 +2,17 @@
   "profiles": {
     "default": {
       "provider": "google",
-      "pass1_model": "gemini-3-pro-preview",
-      "pass2_model": "gemini-3-pro-preview",
-      "pass3_model": "gemini-2.5-flash",
-      "pass4_model": "gemini-2.5-flash"
+      "pass1_model": "gemini-2.5-pro",
+      "pass2_model": "gemini-2.5-pro",
+      "pass3_model": "gemini-2.5-pro",
+      "pass4_model": "gemini-2.5-pro"
     },
-    "openai_gpt5": {
+    "openai": {
       "provider": "openai",
       "pass1_model": "gpt-5-mini",
       "pass2_model": "gpt-5-mini",
-      "pass3_model": "gpt-5.1",
-      "pass4_model": "gpt-5.1"
+      "pass3_model": "gpt-5-mini",
+      "pass4_model": "gpt-5-mini"
     }
   }
 }

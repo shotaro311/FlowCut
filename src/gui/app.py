@@ -6,7 +6,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from src.llm import available_providers
-from src.llm.profiles import get_profile, list_profiles
+from src.llm.profiles import get_profile, list_profiles, list_models_by_provider
 from src.gui.controller import GuiController
 
 
@@ -38,6 +38,10 @@ class MainWindow:
         # プロバイダー・プロファイル定義をロード
         self._providers = available_providers()
         self._profiles = list_profiles()
+        # プロファイルからプロバイダー別の既知モデル一覧を作る
+        self._models_by_provider = list_models_by_provider()
+        # 詳細設定で使うコンボボックス参照を保持
+        self._pass_model_combos: list[ttk.Combobox] = []
         if self._providers:
             # 先頭のプロバイダーを初期値とする
             self.llm_provider_var.set(self._providers[0])
@@ -88,6 +92,7 @@ class MainWindow:
             width=16,
         )
         provider_combo.pack(side=tk.LEFT, padx=(4, 0))
+        provider_combo.bind("<<ComboboxSelected>>", self._on_provider_changed)
 
         # プロファイル（プリセット）選択
         profile_row = ttk.Frame(options_frame)
@@ -117,7 +122,7 @@ class MainWindow:
 
         # 詳細設定エリア（初期は非表示）
         self.advanced_frame = ttk.Frame(options_frame)
-        # Pass1〜4用の入力欄
+        # Pass1〜4用の入力欄（プルダウン形式）
         for idx, (label_text, var) in enumerate(
             [
                 ("Pass1モデル:", self.pass1_model_var),
@@ -129,8 +134,14 @@ class MainWindow:
             row = ttk.Frame(self.advanced_frame)
             row.pack(fill=tk.X, pady=(2 if idx == 0 else 1, 1))
             ttk.Label(row, text=label_text, width=10).pack(side=tk.LEFT)
-            entry = ttk.Entry(row, textvariable=var)
-            entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            combo = ttk.Combobox(
+                row,
+                textvariable=var,
+                values=self._get_models_for_current_provider(),
+                state="readonly",
+            )
+            combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            self._pass_model_combos.append(combo)
 
         self.progress = ttk.Progressbar(main_frame, mode="indeterminate")
         self.progress.pack(fill=tk.X, pady=(0, 12))
@@ -207,17 +218,23 @@ class MainWindow:
 
     # --- LLMプリセット / 詳細設定用のヘルパー ---
 
+    def _get_models_for_current_provider(self) -> list[str]:
+        provider = self.llm_provider_var.get() or ""
+        models = sorted(self._models_by_provider.get(provider, set()))
+        return models
+
     def _apply_profile_to_pass_models(self, profile_name: str) -> None:
         """プロファイルを読み込み、詳細欄のPass1〜4モデルに反映する（空なら触らない）。"""
         profile = get_profile(profile_name)
         if profile is None:
             return
-        # 既存入力を壊しすぎないように、空欄のときだけ埋める運用もあり得るが、
-        # ここではプリセット変更時に一括で上書きする。
+        # プリセット変更時に一括で上書きする。
         self.pass1_model_var.set(profile.pass1_model or "")
         self.pass2_model_var.set(profile.pass2_model or "")
         self.pass3_model_var.set(profile.pass3_model or "")
         self.pass4_model_var.set(profile.pass4_model or "")
+        # モデル候補を再設定（プロバイダーに紐づく一覧）
+        self._refresh_advanced_model_choices()
 
     def _on_profile_changed(self, _event: object) -> None:
         name = self.llm_profile_var.get()
@@ -230,6 +247,16 @@ class MainWindow:
             self.advanced_frame.pack(fill=tk.X, pady=(4, 2))
         else:
             self.advanced_frame.pack_forget()
+
+    def _on_provider_changed(self, _event: object) -> None:
+        """プロバイダー変更時に、詳細設定用のモデル候補を更新する。"""
+        self._refresh_advanced_model_choices()
+
+    def _refresh_advanced_model_choices(self) -> None:
+        """現在のプロバイダーに応じて、Pass1〜4のモデル選択肢を更新する。"""
+        models = self._get_models_for_current_provider()
+        for combo in self._pass_model_combos:
+            combo["values"] = models
 
 
 def run_gui() -> None:

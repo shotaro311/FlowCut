@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Set
 import json
 import logging
 
@@ -74,4 +74,22 @@ def list_profiles() -> Dict[str, LlmProfile]:
     return dict(_load_profiles())
 
 
-__all__ = ["LlmProfile", "get_profile", "list_profiles"]
+def list_models_by_provider() -> Dict[str, Set[str]]:
+    """プロファイル定義から、プロバイダーごとの既知モデル名一覧を作成する。
+
+    GUI 詳細設定のプルダウン候補として利用することを想定。
+    """
+    profiles = _load_profiles()
+    by_provider: Dict[str, Set[str]] = {}
+    for profile in profiles.values():
+        prov = profile.provider
+        if not prov:
+            continue
+        bucket = by_provider.setdefault(prov, set())
+        for m in (profile.pass1_model, profile.pass2_model, profile.pass3_model, profile.pass4_model):
+            if m:
+                bucket.add(m)
+    return by_provider
+
+
+__all__ = ["LlmProfile", "get_profile", "list_profiles", "list_models_by_provider"]

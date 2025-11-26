@@ -71,6 +71,17 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
     *   DockerはMetal GPUサポートなし（CPU動作になり性能が大幅低下）
     *   ネイティブ環境が最も高速で開発効率も高い
 
+### プラットフォーム別のローカルWhisperモデル前提
+
+*   **Mac（友人に配布する `.app` の想定環境）**
+    *   文字起こしのデフォルトは **MLX Whisper Large-v3**。  
+    *   開発時は `pip install mlx-whisper` で依存を導入し、配布時の `.app` にはこのランタイムを同梱する想定。  
+    *   友人側のMacでは、`.app` を展開して開くだけで MLX Whisper が利用できる（別途 `pip install` は不要）。
+*   **Windows（将来対応を想定：ローカル実行）**
+    *   文字起こしの基盤は **OpenAI Whisper Large-v3 のローカル実行版** を前提とする。  
+    *   開発・実行環境では `openai-whisper` など公式Whisper実装を事前インストール、もしくは `.exe` パッケージに同梱する方針。  
+    *   Windows向けの配布形態（`.exe` やインストーラ）は別PLANで詳細設計する（現時点ではTODO）。
+
 ### 依存関係管理
 *   **フェーズ1（推奨）:** `pip + venv + requirements.txt`
     *   シンプルで初心者向け
@@ -222,7 +233,7 @@ python -m src.cli.main run samples/sample_audio.m4a --llm anthropic --rewrite
         - 内部的には `config/llm_profiles.json` に定義した LLMプロファイルを選択し、Pass1〜4 のモデルをまとめて変更する。  
         - 友人はプリセット名だけを意識すればよい想定。
     *   [ ] **詳細モード（上級者向け）**  
-        - GUI上の折りたたみセクションで、Pass1〜Pass4 のモデル名をテキスト入力で個別に上書きできる。  
+        - GUI上の折りたたみセクションで、Pass1〜Pass4 のモデル名を **プルダウン（Combobox）** から個別に選択できる（候補は `config/llm_profiles.json` などプロファイル定義から自動生成）。  
         - CLIの `--llm-profile` と `LLM_PASS*_MODEL` 相当の設定をGUIから調整できるイメージ。
     *   [ ] **語尾調整・リライトを行う**（デフォルトOFF：原文維持＋フィラー削除のみ）
     *   [ ] **高精度モード**（large-v3モデル使用。OFFの場合はmediumモデルで高速化）
