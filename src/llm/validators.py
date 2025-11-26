@@ -41,15 +41,17 @@ def detect_issues(
     """
     issues = []
     
-    # Rule 1: Short line (< 5 chars) ending with particle
+    # Rule 1: Short line (< 5 chars) - 5文字未満の行は全て検出
     PARTICLES = ["を", "に", "で", "が", "は", "も", "から", "まで", "へ", "と"]
     for i, line in enumerate(lines):
-        if len(line.text) < 5 and line.text and line.text[-1] in PARTICLES:
+        if len(line.text) < 5 and line.text:
+            # 助詞で終わる場合は高優先度、それ以外は中優先度
+            ends_with_particle = line.text[-1] in PARTICLES
             issues.append(ValidationIssue(
                 type="short_particle_line",
                 line_idx=i,
-                severity="high",
-                description=f"行{i+1}は{len(line.text)}文字で助詞「{line.text[-1]}」で終わる",
+                severity="high" if ends_with_particle else "medium",
+                description=f"行{i+1}は{len(line.text)}文字で短すぎます" + (f"（助詞「{line.text[-1]}」で終わる）" if ends_with_particle else ""),
                 suggested_action="前行または次行と統合"
             ))
     

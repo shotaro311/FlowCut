@@ -16,7 +16,7 @@ def _load_mlx_whisper():
         return importlib.import_module("mlx_whisper")
     except ImportError as exc:  # pragma: no cover - optional dependency
         raise TranscriptionError(
-            "mlx-whisper が未インストールです。`pip install mlx-whisper` を実行してください。"
+            f"mlx-whisper のロードに失敗しました: {exc!r}"
         ) from exc
 
 

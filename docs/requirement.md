@@ -8,8 +8,8 @@
 
 ## 2. 技術スタック
 
-### 音声認識（3モデルで比較検証）
-プロトタイプで3つのモデルを実装。**デフォルトは mlx-whisper large-v3（MLX版）** とする（Plan方針）。
+### 音声認識（2モデルで比較検証）
+プロトタイプでは以下2つのモデルを実装。**デフォルトは mlx-whisper large-v3（MLX版）** とする（Plan方針）。
 
 *   **モデル1: mlx-whisper large-v3（汎用×MLX最適化｜デフォルト）**
     *   リポジトリ: `mlx-community/whisper-large-v3-mlx`
@@ -17,12 +17,7 @@
     *   word-levelタイムスタンプ対応
     *   **期待値**: 最高精度（専門用語・複雑な内容）
 
-*   **モデル2: kotoba-whisper-v2.0-mlx（日本語特化×MLX最適化）**
-    *   リポジトリ: `kaiinui/kotoba-whisper-v2.0-mlx`
-    *   distil-large-v3ベース / ReazonSpeech 720万クリップ
-    *   **期待値**: 日本語で高速・高精度
-
-*   **モデル3: OpenAI Whisper large-v3（公式実装）**
+*   **モデル2: OpenAI Whisper large-v3（公式実装）**
     *   リポジトリ: `openai/whisper`
     *   MPS（Metal Performance Shaders）対応
     *   word-levelタイムスタンプ対応
@@ -76,6 +71,17 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
     *   DockerはMetal GPUサポートなし（CPU動作になり性能が大幅低下）
     *   ネイティブ環境が最も高速で開発効率も高い
 
+### プラットフォーム別のローカルWhisperモデル前提
+
+*   **Mac（友人に配布する `.app` の想定環境）**
+    *   文字起こしのデフォルトは **MLX Whisper Large-v3**。  
+    *   開発時は `pip install mlx-whisper` で依存を導入し、配布時の `.app` にはこのランタイムを同梱する想定。  
+    *   友人側のMacでは、`.app` を展開して開くだけで MLX Whisper が利用できる（別途 `pip install` は不要）。
+*   **Windows（将来対応を想定：ローカル実行）**
+    *   文字起こしの基盤は **OpenAI Whisper Large-v3 のローカル実行版** を前提とする。  
+    *   開発・実行環境では `openai-whisper` など公式Whisper実装を事前インストール、もしくは `.exe` パッケージに同梱する方針。  
+    *   Windows向けの配布形態（`.exe` やインストーラ）は別PLANで詳細設計する（現時点ではTODO）。
+
 ### 依存関係管理
 *   **フェーズ1（推奨）:** `pip + venv + requirements.txt`
     *   シンプルで初心者向け
@@ -84,10 +90,9 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
 *   **将来的な選択肢:** uv または Poetry
     *   プロジェクトが大規模化した際に検討
     *   バージョン競合の自動解決が必要になったら移行
-*   **同一環境に3モデルを共存:**
-    *   mlx-whisper（kotoba含む）
-    *   openai-whisper（公式）
-    *   ※ faster-whisper は現時点で使用しない
+*   **同一環境に2モデルを共存:**
+    *   mlx-whisper（MLX Whisper Large-v3）
+    *   openai-whisper（公式 Whisper large-v3 ローカル/API 実装）
 *   競合が発生した場合のみ環境分離を検討
 
 ### GUI（フェーズ4で実装）
@@ -188,10 +193,11 @@ python -m src.cli.main run <音声ファイル> [オプション]
 - `--language ja` / `--chunk-size 30` などは各ランナーへ伝播。
 - `--resume temp/progress_xxx.json` : 途中から再開。
 - `--simulate/--no-simulate` : ランナーのシミュレーション切替（デフォルトON）。
+* `--subtitle-dir ./my_output` : SRT字幕を書き出すディレクトリを指定（未指定時は `output/`）。
 
 #### 出力パス
 - 音声×モデル×実行時刻ごとに `temp/poc_samples/{run_id}.json` を保存（内部的に **最大5件まで** を保持し、古いJSONから自動削除してディスク肥大化を防ぐ）。
-- LLM整形を実行した場合のみ `output/{run_id}.srt` を自動命名で保存（`--output` オプションは存在しない）。
+- LLM整形を実行した場合のみ `{subtitle_dir}/{run_id}.srt` を自動命名で保存（`subtitle_dir` のデフォルトは `output/`、`--subtitle-dir` で変更可能）。
 
 #### 実行例
 ```bash
@@ -223,11 +229,18 @@ python -m src.cli.main run samples/sample_audio.m4a --llm anthropic --rewrite
     *   **実行ボタン**
     *   **進捗バー:** 「音声解析中...」「AI思考中...」「ファイル生成中」などのステータス表示。
 *   **オプション設定（トグルスイッチ等）:**
+    *   [ ] **モデルプリセット選択**（例: `default` / `low_cost` / `high_quality`）  
+        - 内部的には `config/llm_profiles.json` に定義した LLMプロファイルを選択し、Pass1〜4 のモデルをまとめて変更する。  
+        - 友人はプリセット名だけを意識すればよい想定。
+    *   [ ] **詳細モード（上級者向け）**  
+        - GUI上の折りたたみセクションで、Pass1〜Pass4 のモデル名を **プルダウン（Combobox）** から個別に選択できる（候補は `config/llm_profiles.json` などプロファイル定義から自動生成）。  
+        - CLIの `--llm-profile` と `LLM_PASS*_MODEL` 相当の設定をGUIから調整できるイメージ。
     *   [ ] **語尾調整・リライトを行う**（デフォルトOFF：原文維持＋フィラー削除のみ）
     *   [ ] **高精度モード**（large-v3モデル使用。OFFの場合はmediumモデルで高速化）
 *   **出力:**
-    *   元の音声ファイルと同じフォルダに `filename_subtitle.srt` を保存。
-    *   完了時に通知を表示
+    *   デフォルトでは `output/` ディレクトリに `filename_model_timestamp.srt` を保存（CLIと共通）。
+    *   GUI からは「保存先フォルダを選択」ボタンで任意のディレクトリを指定できる。
+    *   完了時に通知を表示し、GUI下部に「総トークン数」「概算APIコスト（USD、小数点第3位まで）」「総処理時間（X分Y秒）」を表示する。
 
 #### 将来のWebアプリ版について（メモ）
 - 本要件定義のMVPでは「ローカル実行できるGUI（Tkinter / Flet想定）」を優先し、ブラウザ上で動くWebアプリ版は**別フェーズ**で検討する。  
@@ -289,7 +302,7 @@ OpenAI/Google/Anthropicの各LLMに送信する指示のプロトタイプです
 
 ### フェーズ1: コアロジック実装（完了間近）
 **目標:** CLIで音声 → SRT を自動生成できるPoCを確立
-- 3モデル（mlxデフォルト・kotoba・openai）実装と比較
+- 2モデル（mlxデフォルト・openai）実装と比較
 - 進捗JSON・SRT出力・エラーハンドリングの統合
 
 ### フェーズ2: LLM整形＋タイムスタンプアライメント精度向上（進行中）

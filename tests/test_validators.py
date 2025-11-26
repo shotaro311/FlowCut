@@ -26,7 +26,7 @@ def test_detect_split_quotation():
     """Test detection of split quotation expressions."""
     lines = [
         LineRange(0, 10, "はい何するんだって"),
-        LineRange(11, 15, "言うから"),  # Problem: quoted "って言う" split
+        LineRange(11, 15, "言うからです"),  # Problem: quoted "って言う" split (6文字で短行検出を回避)
     ]
     words = []
     
@@ -52,7 +52,7 @@ def test_no_issues():
 
 
 def test_short_line_without_particle():
-    """Test that short lines without particles are not flagged."""
+    """Test that short lines without particles are also flagged (medium severity)."""
     lines = [
         LineRange(0, 5, "これ"),  # 2 chars, doesn't end with particle
         LineRange(6, 10, "テストです"),
@@ -61,7 +61,10 @@ def test_short_line_without_particle():
     
     issues = detect_issues(lines, words)
     
-    assert len(issues) == 0
+    # 5文字未満の行は助詞に関係なく検出される
+    assert len(issues) == 1
+    assert issues[0].line_idx == 0
+    assert issues[0].severity == "medium"  # 助詞で終わらないので中優先度
 
 
 def test_particle_line_with_sufficient_length():

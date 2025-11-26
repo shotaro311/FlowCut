@@ -3,9 +3,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Set, List
 import json
 import logging
+import sys
 
 logger = logging.getLogger(__name__)
 
@@ -23,13 +24,32 @@ class LlmProfile:
 _PROFILE_CACHE: Dict[str, LlmProfile] | None = None
 
 
+def _get_profiles_json_path() -> Path:
+    """llm_profiles.json のパスを解決する。"""
+    # 1. PyInstaller バンドル時: _MEIPASS/config/llm_profiles.json
+    base = getattr(sys, "_MEIPASS", None)
+    if base is not None:
+        bundled_candidate = Path(str(base)) / "config" / "llm_profiles.json"
+        if bundled_candidate.exists():
+            return bundled_candidate
+
+    # 2. リポジトリルート想定: このファイルからの相対 ../.. /config/llm_profiles.json
+    here = Path(__file__).resolve().parent
+    repo_candidate = here.parent.parent / "config" / "llm_profiles.json"
+    if repo_candidate.exists():
+        return repo_candidate
+
+    # 3. フォールバック: カレントディレクトリ配下
+    return Path("config/llm_profiles.json")
+
+
 def _load_profiles() -> Dict[str, LlmProfile]:
     """config/llm_profiles.json を読み込み、名前→LlmProfile の辞書に変換する。"""
     global _PROFILE_CACHE
     if _PROFILE_CACHE is not None:
         return _PROFILE_CACHE
 
-    path = Path("config/llm_profiles.json")
+    path = _get_profiles_json_path()
     if not path.exists():
         logger.warning("LLMプロファイル定義が見つかりません: %s", path)
         _PROFILE_CACHE = {}
@@ -66,5 +86,51 @@ def get_profile(name: str) -> Optional[LlmProfile]:
     return profiles.get(name)
 
 
-__all__ = ["LlmProfile", "get_profile"]
+def list_profiles() -> Dict[str, LlmProfile]:
+    """利用可能な LLM プロファイル一覧を返す（name → LlmProfile）。
 
+    GUI などでプリセット一覧を表示する用途を想定。
+    """
+    return dict(_load_profiles())
+
+
+def list_models_by_provider() -> Dict[str, Set[str]]:
+    """プロバイダーごとの既知モデル名一覧を返す。
+
+    優先度:
+    1. config/llm_profiles.json の `models` セクション
+    2. プロファイル定義からの自動集約（後方互換用）
+    """
+    path = _get_profiles_json_path()
+    by_provider: Dict[str, Set[str]] = {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        models_raw: Dict[str, List[str]] = raw.get("models", {})  # type: ignore[assignment]
+        if isinstance(models_raw, dict):
+            for provider, items in models_raw.items():
+                if not isinstance(items, list):
+                    continue
+                bucket = by_provider.setdefault(str(provider), set())
+                for m in items:
+                    if m:
+                        bucket.add(str(m))
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("llm_profiles.json の models セクション読み込みに失敗しました: %s", exc)
+
+    if by_provider:
+        return by_provider
+
+    # フォールバック: プロファイルから自動集約
+    profiles = _load_profiles()
+    for profile in profiles.values():
+        prov = profile.provider
+        if not prov:
+            continue
+        bucket = by_provider.setdefault(prov, set())
+        for m in (profile.pass1_model, profile.pass2_model, profile.pass3_model, profile.pass4_model):
+            if m:
+                bucket.add(m)
+    return by_provider
+
+
+__all__ = ["LlmProfile", "get_profile", "list_profiles", "list_models_by_provider"]
