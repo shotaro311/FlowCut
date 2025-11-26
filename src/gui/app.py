@@ -5,7 +5,6 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from src.llm import available_providers
 from src.llm.profiles import get_profile, list_profiles, list_models_by_provider
 from src.gui.controller import GuiController
 
@@ -42,14 +41,16 @@ class MainWindow:
         self._models_by_provider = list_models_by_provider()
         # 詳細設定で使うコンボボックス参照を保持
         self._pass_model_combos: list[ttk.Combobox] = []
-        if self._providers:
-            # 先頭のプロバイダーを初期値とする
-            self.llm_provider_var.set(self._providers[0])
         if self._profiles:
             # default があればそれを優先
             initial_profile = "default" if "default" in self._profiles else sorted(self._profiles.keys())[0]
             self.llm_profile_var.set(initial_profile)
+            # プロバイダーはプロファイル側に合わせる（例: default=google/Gemini）
+            self.llm_provider_var.set(self._profiles[initial_profile].provider or "google")
             self._apply_profile_to_pass_models(initial_profile)
+        else:
+            # フォールバック: プロバイダーは google(Gemini) 固定
+            self.llm_provider_var.set("google")
 
         self._build_widgets()
 
@@ -80,19 +81,11 @@ class MainWindow:
         options_frame = ttk.LabelFrame(main_frame, text="LLMオプション（プリセット＋詳細設定）")
         options_frame.pack(fill=tk.BOTH, expand=False, pady=(0, 12))
 
-        # プロバイダー選択
+        # プロバイダー表示（GUIからは変更しない・プロファイル側で決まる）
         provider_row = ttk.Frame(options_frame)
         provider_row.pack(fill=tk.X, pady=(4, 2))
         ttk.Label(provider_row, text="LLMプロバイダー:").pack(side=tk.LEFT)
-        provider_combo = ttk.Combobox(
-            provider_row,
-            textvariable=self.llm_provider_var,
-            values=list(self._providers),
-            state="readonly",
-            width=16,
-        )
-        provider_combo.pack(side=tk.LEFT, padx=(4, 0))
-        provider_combo.bind("<<ComboboxSelected>>", self._on_provider_changed)
+        ttk.Label(provider_row, textvariable=self.llm_provider_var).pack(side=tk.LEFT, padx=(4, 0))
 
         # プロファイル（プリセット）選択
         profile_row = ttk.Frame(options_frame)
