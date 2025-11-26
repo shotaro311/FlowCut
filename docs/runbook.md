@@ -34,7 +34,7 @@
 - 一括掃除: `cleanup` サブコマンドまたは `scripts/cleanup_temp.py`
 
 ## 運用メモ
-- Whisperランナー: kotoba / mlx / openai を選択可能（デフォルトは MLX）。フォールバックなしのtwo-pass専用フロー。
+- Whisperランナー: mlx / openai を選択可能（デフォルトは MLX）。フォールバックなしのtwo-pass専用フロー。
 - アライン調整オプション（RapidFuzz）は撤去済み。SRTは two-pass の `lines` 出力をワードインデックス直結で生成。
 - API安定性: LLM呼び出しは 1→3→5 秒のバックオフ付きリトライ。デフォルトタイムアウトは 500 秒（`LLM_REQUEST_TIMEOUT` / `--llm-timeout` で上書き可）。
 

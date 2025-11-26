@@ -65,7 +65,7 @@ def _normalize_llm_provider(raw: Optional[str]) -> Optional[str]:
 @app.command()
 def run(
     audio: List[Path] = typer.Argument(None, help='入力音声ファイルへのパス（複数可）。--resume 指定時は省略可'),
-    models: Optional[str] = typer.Option(None, help='カンマ区切りのランナー一覧 (例: kotoba,mlx)。未指定なら全ランナー'),
+    models: Optional[str] = typer.Option(None, help='カンマ区切りのランナー一覧 (例: mlx,openai)。未指定ならデフォルトランナー（通常は mlx のみ）'),
     language: Optional[str] = typer.Option(None, help='言語コード（例: ja, en）。未指定なら自動判定'),
     chunk_size: Optional[int] = typer.Option(None, help='モデルごとのチャンクサイズ上書き'),
     output_dir: Path = typer.Option(Path('temp/poc_samples'), help='結果を書き出すディレクトリ'),

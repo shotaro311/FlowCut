@@ -90,10 +90,9 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
 *   **将来的な選択肢:** uv または Poetry
     *   プロジェクトが大規模化した際に検討
     *   バージョン競合の自動解決が必要になったら移行
-*   **同一環境に3モデルを共存:**
-    *   mlx-whisper（kotoba含む）
-    *   openai-whisper（公式）
-    *   ※ faster-whisper は現時点で使用しない
+*   **同一環境に2モデルを共存:**
+    *   mlx-whisper（MLX Whisper Large-v3）
+    *   openai-whisper（公式 Whisper large-v3 ローカル/API 実装）
 *   競合が発生した場合のみ環境分離を検討
 
 ### GUI（フェーズ4で実装）
@@ -240,7 +239,7 @@ python -m src.cli.main run samples/sample_audio.m4a --llm anthropic --rewrite
 *   **出力:**
     *   デフォルトでは `output/` ディレクトリに `filename_model_timestamp.srt` を保存（CLIと共通）。
     *   GUI からは「保存先フォルダを選択」ボタンで任意のディレクトリを指定できる。
-    *   完了時に通知を表示
+    *   完了時に通知を表示し、GUI下部に「総トークン数」「概算APIコスト（USD、小数点第3位まで）」「総処理時間（X分Y秒）」を表示する。
 
 ## 5. プロンプト設計案（コアロジック）
 OpenAI/Google/Anthropicの各LLMに送信する指示のプロトタイプです。
@@ -297,7 +296,7 @@ OpenAI/Google/Anthropicの各LLMに送信する指示のプロトタイプです
 
 ### フェーズ1: コアロジック実装（完了間近）
 **目標:** CLIで音声 → SRT を自動生成できるPoCを確立
-- 3モデル（mlxデフォルト・kotoba・openai）実装と比較
+- 2モデル（mlxデフォルト・openai）実装と比較
 - 進捗JSON・SRT出力・エラーハンドリングの統合
 
 ### フェーズ2: LLM整形＋タイムスタンプアライメント精度向上（進行中）
