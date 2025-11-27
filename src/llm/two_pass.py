@@ -485,11 +485,31 @@ class TwoPassFormatter:
             segments.append(SubtitleSegment(index=0, start=start, end=end, text=current_text))
             last_end_time = end
 
+        # セグメント間の「タイムコードの空白時間」を埋めるため、
+        # 次のセグメントの開始時刻まで前のセグメントの end を延長する。
+        self._fill_segment_gaps(segments)
+
         # Re-assign indices
         for i, seg in enumerate(segments, start=1):
             seg.index = i
 
         return segments
+
+    def _fill_segment_gaps(self, segments: List["SubtitleSegment"]) -> None:
+        """
+        連続する SubtitleSegment 間に存在するタイムコードの空白時間を埋める。
+
+        具体的には、次のセグメントの start が現在の end より後ろにある場合、
+        現在の end を次の start まで延長し、画面上のテロップが途切れないようにする。
+        """
+        if not segments:
+            return
+
+        for i in range(len(segments) - 1):
+            current = segments[i]
+            nxt = segments[i + 1]
+            if nxt.start > current.end:
+                current.end = nxt.start
 
     def _ensure_trailing_coverage(
         self,
