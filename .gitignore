@@ -45,3 +45,6 @@ temp/**/*.tmp
 output/**/*.srt
 samples/*.wav
 samples/*.m4a
+node_modules
+node_modules
+node_modules
