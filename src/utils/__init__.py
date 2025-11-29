@@ -8,6 +8,7 @@ from .progress import (
     save_progress,
     load_progress,
 )
+from .paths import generate_sequential_path
 
 __all__ = [
     'BlockProgress',
@@ -17,4 +18,5 @@ __all__ = [
     'mark_run_status',
     'save_progress',
     'load_progress',
+    'generate_sequential_path',
 ]

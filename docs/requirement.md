@@ -198,7 +198,8 @@ python -m src.cli.main run <音声ファイル> [オプション]
 
 #### 出力パス
 - 音声×モデル×実行時刻ごとに `temp/poc_samples/{run_id}.json` を保存（内部的に **最大5件まで** を保持し、古いJSONから自動削除してディスク肥大化を防ぐ）。
-- LLM整形を実行した場合のみ `{subtitle_dir}/{run_id}.srt` を自動命名で保存（`subtitle_dir` のデフォルトは `output/`、`--subtitle-dir` で変更可能）。
+- LLM整形を実行した場合のみ `{subtitle_dir}/{run_id}.srt` を自動命名で保存（`subtitle_dir` のデフォルトは `output/`、`--subtitle-dir` で変更可能）。  
+  - 既に同名の `*.srt` が存在する場合は、OSやクラウドストレージと同様に `name.srt`, `name (1).srt`, `name (2).srt` ... のように **連番サフィックスを付与** して保存し、既存ファイルを上書きしない。
 
 #### 実行例
 ```bash
@@ -219,7 +220,8 @@ python -m src.cli.main run samples/sample_audio.m4a --llm anthropic --rewrite
 *   tqdmなどでプログレスバー表示
 
 #### 出力
-*   LLM整形を実行した場合のみ `output/{音声名}_{モデル}_{日時}.srt` を自動保存（--outputオプションなし）
+*   LLM整形を実行した場合のみ `output/{run_id}.srt` を自動保存（--outputオプションなし）。  
+    * `run_id = {音声名}_{モデル}_{日時}` をベースとし、出力先に同名ファイルが既にある場合は `name.srt`, `name (1).srt`, `name (2).srt` ... という形式で **連番サフィックス付きのファイル名** を採用する（ユーザーに優しい挙動を優先）。
 *   文字起こしJSONは `temp/poc_samples/{run_id}.json` に保存されるが、最大5件までを保持し、古いファイルから自動削除される
 
 ### フェーズ4: GUIアプリ（将来実装｜Plan準拠）
@@ -239,7 +241,8 @@ python -m src.cli.main run samples/sample_audio.m4a --llm anthropic --rewrite
     *   [ ] **語尾調整・リライトを行う**（デフォルトOFF：原文維持＋フィラー削除のみ）
     *   [ ] **高精度モード**（large-v3モデル使用。OFFの場合はmediumモデルで高速化）
 *   **出力:**
-    *   デフォルトでは `output/` ディレクトリに `filename_model_timestamp.srt` を保存（CLIと共通）。
+    *   デフォルトでは `output/` ディレクトリに `{run_id}.srt` を保存（CLIと共通）。  
+        * 既に同名ファイルが存在する場合は `name.srt`, `name (1).srt`, `name (2).srt` ... のように **連番サフィックスを付けて保存** し、既存ファイルを保持する。
     *   GUI からは「保存先フォルダを選択」ボタンで任意のディレクトリを指定できる。
     *   完了時に通知を表示し、GUI下部に「総トークン数」「概算APIコスト（USD、小数点第3位まで）」「総処理時間（X分Y秒）」を表示する。
 

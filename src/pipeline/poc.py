@@ -26,6 +26,7 @@ from src.utils.progress import (
     mark_run_status,
     save_progress,
 )
+from src.utils.paths import generate_sequential_path
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +132,11 @@ def execute_poc_run(
 
             subtitle_path: Path | None = None
             if options.llm_provider:
-                subtitle_path = options.subtitle_dir / f"{run_id}.srt"
+                # 希望ファイル名 {run_id}.srt をベースに、
+                # 既存ファイルがある場合は audio (1).srt 形式の
+                # 連番サフィックス付きファイル名を採用する
+                desired_subtitle_path = options.subtitle_dir / f"{run_id}.srt"
+                subtitle_path = generate_sequential_path(desired_subtitle_path)
                 subtitle_text: str | None = None
                 if not result.words:
                     logger.warning("wordタイムスタンプが空のためSRT生成をスキップします: %s", run_id)
