@@ -234,6 +234,8 @@ class TwoPassFormatter:
         *,
         run_id: str | None = None,
         source_name: str | None = None,
+        fill_gaps: bool = True,
+        max_gap_duration: float | None = None,
     ) -> None:
         settings = get_settings().llm
         self.provider_slug = llm_provider
@@ -262,6 +264,11 @@ class TwoPassFormatter:
         self._log_buffer: Dict[str, str] = {}
         self._log_date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
         self._log_written = False
+        # SRTギャップ埋め設定
+        # fill_gaps: True の場合、連続するセグメント間の空白時間を埋める
+        # max_gap_duration: 埋める最大ギャップ秒数。None の場合は上限なし
+        self.fill_gaps = fill_gaps
+        self.max_gap_duration = max_gap_duration
 
     # --- logging helpers -------------------------------------------------
 
@@ -487,7 +494,8 @@ class TwoPassFormatter:
 
         # セグメント間の「タイムコードの空白時間」を埋めるため、
         # 次のセグメントの開始時刻まで前のセグメントの end を延長する。
-        self._fill_segment_gaps(segments)
+        if self.fill_gaps:
+            self._fill_segment_gaps(segments, max_gap=self.max_gap_duration)
 
         # Re-assign indices
         for i, seg in enumerate(segments, start=1):
@@ -495,12 +503,21 @@ class TwoPassFormatter:
 
         return segments
 
-    def _fill_segment_gaps(self, segments: List["SubtitleSegment"]) -> None:
+    def _fill_segment_gaps(
+        self,
+        segments: List["SubtitleSegment"],
+        max_gap: float | None = None,
+    ) -> None:
         """
         連続する SubtitleSegment 間に存在するタイムコードの空白時間を埋める。
 
         具体的には、次のセグメントの start が現在の end より後ろにある場合、
         現在の end を次の start まで延長し、画面上のテロップが途切れないようにする。
+
+        Args:
+            segments: 対象の SubtitleSegment リスト（in-place で更新）
+            max_gap: 埋める最大ギャップ秒数。None の場合は上限なし（すべてのギャップを埋める）。
+                     例えば 10.0 を指定すると、10秒以上のギャップは埋めない。
         """
         if not segments:
             return
@@ -508,7 +525,17 @@ class TwoPassFormatter:
         for i in range(len(segments) - 1):
             current = segments[i]
             nxt = segments[i + 1]
-            if nxt.start > current.end:
+            gap = nxt.start - current.end
+            if gap > 0:
+                # max_gap が指定されていて、ギャップがそれを超える場合は埋めない
+                if max_gap is not None and gap > max_gap:
+                    logger.debug(
+                        "Gap %.2fs exceeds max_gap %.2fs; not filling (segment %d)",
+                        gap,
+                        max_gap,
+                        i + 1,
+                    )
+                    continue
                 current.end = nxt.start
 
     def _ensure_trailing_coverage(
