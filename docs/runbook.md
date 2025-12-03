@@ -92,10 +92,11 @@
    python -m src.cli.main models
    python -m src.cli.main gui
    ```
-4. Windows 用の PyInstaller レシピ（例: `FlowCut_win.spec` ※Windows版 PLAN で追加予定）を使って one-folder 形式の出力を作成する。
+4. 事前に `assets/FlowCut.ico` を用意する（既存の `assets/FlowCut.iconset` / `assets/FlowCut.icns` からアイコン変換ツール等で生成し、リポジトリに配置する）。
+5. Windows 用の PyInstaller レシピ（`FlowCut_win.spec`）を使って one-folder 形式の出力を作成する。
    ```bash
    pyinstaller FlowCut_win.spec
    ```
-5. `dist/FlowCut/FlowCut.exe` が生成されるので、`dist/FlowCut/` フォルダごと zip に固めて `FlowCut-win.zip` とし、友人には「解凍 → `FlowCut.exe` ダブルクリック」で使ってもらう。
+6. `dist/FlowCut/FlowCut.exe` が生成されるので、`dist/FlowCut/` フォルダごと zip に固めて `FlowCut-win.zip` とし、友人には「解凍 → `FlowCut.exe` ダブルクリック」で使ってもらう。
 
 ※ Windows 版で同梱する ffmpeg や Whisper ランタイムの詳細構成は `docs/plan/20251203_PLAN1.md`（Windows版 FlowCut GUI パッケージ化 PLAN）を参照。
