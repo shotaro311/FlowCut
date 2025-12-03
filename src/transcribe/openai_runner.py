@@ -30,10 +30,27 @@ class OpenAIWhisperRunner(BaseTranscribeRunner):
     requires_gpu = False
 
     def transcribe(self, audio_path: Path, config: TranscriptionConfig) -> TranscriptionResult:
+        # 明示的にシミュレーション指定された場合は常にダミー結果を返す
         if config.simulate:
             return self.simulate_transcription(audio_path, config)
 
-        return transcribe_via_openai_whisper(audio_path, config, runner_slug=self.slug, runner_model=self.default_model)
+        # OPENAI_API_KEY が未設定の場合はエラーにはせず、
+        # 「Whisper 部分のみシミュレーション」で動作させる。
+        # （LLM 部分は Google Gemini など他プロバイダのキーだけで動かせるようにする）
+        settings = get_settings().llm
+        if not settings.openai_api_key:
+            logger.warning(
+                "OPENAI_API_KEY が未設定のため、openai ランナーはシミュレーションモードで実行します。"
+            )
+            # simulate=True 相当の設定で疑似書き起こしを返す
+            return self.simulate_transcription(audio_path, config.with_override(simulate=True))
+
+        return transcribe_via_openai_whisper(
+            audio_path,
+            config,
+            runner_slug=self.slug,
+            runner_model=self.default_model,
+        )
 
 
 def _parse_words(raw_words: List[Dict[str, Any]]) -> List[WordTimestamp]:
