@@ -8,12 +8,14 @@ Windows 向け FlowCut GUI パッケージング用の PyInstaller レシピ（o
 - 出力: dist/FlowCut/FlowCut.exe を含むフォルダ一式
 """
 
+hiddenimports = ['whisper']
+
 a = Analysis(
     ['flowcut_gui_launcher.py'],
     pathex=[],
     binaries=[],
     datas=[('config', 'config')],
-    hiddenimports=[],
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -51,4 +53,3 @@ coll = COLLECT(
     upx_exclude=[],
     name='FlowCut',
 )
-
