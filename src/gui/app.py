@@ -15,8 +15,9 @@ from src.gui.workflow_panel import WorkflowPanel
 class MainWindow:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.title("Flow Cut GUI (Phase 1) - 並列処理対応")
-        self.root.geometry("640x800")  # 2パネル用にサイズを拡張
+        # アプリタイトルはシンプルに「FlowCut」とする
+        self.root.title("FlowCut")
+        self.root.geometry("640x800")  # ウィンドウサイズ
         
         # 設定マネージャー
         self.config = get_config()
@@ -42,17 +43,10 @@ class MainWindow:
         
         title_label = ttk.Label(
             header_frame, 
-            text="Flow Cut - 並列処理対応GUI", 
+            text="FlowCut", 
             font=("", 14, "bold")
         )
         title_label.pack(side=tk.LEFT)
-        
-        info_label = ttk.Label(
-            header_frame, 
-            text="最大2つのワークフローを同時実行できます",
-            foreground="#666666"
-        )
-        info_label.pack(side=tk.LEFT, padx=(16, 0))
 
         api_button = ttk.Button(
             header_frame,
