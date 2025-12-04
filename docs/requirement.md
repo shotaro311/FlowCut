@@ -63,6 +63,8 @@ ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxx
 ANTHROPIC_MODEL=claude-sonnet-4-20250514
 ```
 
+※ 基本運用では **`GOOGLE_API_KEY` があれば十分** で、OpenAI の LLM / Whisper API を使う場合にのみ `OPENAI_API_KEY` が必要（それ以外のケースでは未設定でもよい）。  
+
 ### 言語・環境
 *   **Python 3.10-3.12**（3.13は非対応）
 *   **開発環境:** Python仮想環境（venv）
@@ -77,10 +79,41 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
     *   文字起こしのデフォルトは **MLX Whisper Large-v3**。  
     *   開発時は `pip install mlx-whisper` で依存を導入し、配布時の `.app` にはこのランタイムを同梱する想定。  
     *   友人側のMacでは、`.app` を展開して開くだけで MLX Whisper が利用できる（別途 `pip install` は不要）。
-*   **Windows（将来対応を想定：ローカル実行）**
-    *   文字起こしの基盤は **OpenAI Whisper Large-v3 のローカル実行版** を前提とする。  
-    *   開発・実行環境では `openai-whisper` など公式Whisper実装を事前インストール、もしくは `.exe` パッケージに同梱する方針。  
-    *   Windows向けの配布形態（`.exe` やインストーラ）は別PLANで詳細設計する（現時点ではTODO）。
+*   **Windows（友人に配布する `.exe` の想定環境）**
+    *   文字起こしの基盤は **OpenAI Whisper Large-v3 のローカル実行版**（`openai-whisper`）を前提とする。  
+    *   開発時は Windows 上で `pip install openai-whisper` などを行い、配布時の `.exe` には Python ランタイム・依存ライブラリを PyInstaller で同梱する方針。  
+    *   友人側のWindowsでは、配布されたフォルダ（例: `FlowCut-win/`）内の `FlowCut.exe` をダブルクリックするだけで GUI が起動し、Python や ffmpeg の事前インストールは不要とする。  
+    *   具体的なパッケージング手順・構成は `docs/plan/20251203_PLAN1.md`（Windows版 FlowCut GUI パッケージ化PLAN）に従う。
+
+### パッケージングと再ビルド運用（macOS / Windows 共通方針）
+
+*   アプリの機能や画面を更新した場合、**ソースコードの変更 → テスト → 各OS向けパッケージの再生成** という流れで配布物を更新する。  
+*   OSごとに PyInstaller のレシピ（`.spec` ファイル）を分けて管理し、同じコミットから macOS 用 / Windows 用をそれぞれビルドする。
+
+#### macOS 向け `.app` 再パッケージ（概要）
+
+1. macOS 開発環境で `main` ブランチを最新化し、テスト・簡単な動作確認を行う。  
+2. 必要な依存（`mlx-whisper` / ffmpeg など）がインストールされていることを確認する。  
+3. PyInstaller のレシピ（例: `FlowCut.spec`）を使って `.app` を再ビルドする。  
+   * 典型例: `pyinstaller FlowCut.spec` を実行し、`dist/FlowCut.app` を得る。  
+4. 出来上がった `FlowCut.app` を zip などに固めて、友人に配布する。
+
+#### Windows 向け `.exe` 再パッケージ（概要）
+
+1. Windows 開発環境でリポジトリを同じコミット（通常は `main` の最新）に合わせ、**公式 Python 3.10 x64 + venv** で仮想環境と依存インストールを行う。  
+   - 例: `python -m venv .venv` → `.venv\Scripts\activate` → `pip install -r requirements-dev.txt` → `pip install openai-whisper`。  
+   - Anaconda 環境の上にさらに venv を重ねると PyInstaller + torch 周りで DLL エラーが出やすいため、FlowCut 用には「公式 Python + venv」構成を推奨。  
+2. CLI と GUI が Windows 上で問題なく動作することを確認する。  
+3. Windows 用 PyInstaller レシピ（例: `FlowCut_win.spec`）を使って one-folder 形式の出力を作成する。  
+   * 典型例: `pyinstaller FlowCut_win.spec` を実行し、`dist/FlowCut/FlowCut.exe` を得る。  
+4. ビルド後、openai-whisper が参照する `assets` データを exe 側にコピーする（暫定手順）。  
+   ```powershell
+   New-Item -ItemType Directory -Force -Path "dist\FlowCut\_internal\whisper\assets"
+   Copy-Item ".venv\Lib\site-packages\whisper\assets\*" "dist\FlowCut\_internal\whisper\assets\" -Recurse -Force
+   ```
+5. `dist/FlowCut/` フォルダ全体を zip にまとめて `FlowCut-win.zip` とし、友人には「解凍 → `FlowCut.exe` ダブルクリック」で使ってもらう。  
+
+※ 各OSの具体的なコマンドやビルドオプションは、開発者向けランブック（`docs/runbook.md`）および関連PLAN（特に Windows 版: `docs/plan/20251203_PLAN1.md`）に詳細を記載する。
 
 ### 依存関係管理
 *   **フェーズ1（推奨）:** `pip + venv + requirements.txt`

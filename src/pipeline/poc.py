@@ -7,6 +7,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple, Callable
+import sys
 import time
 
 from src.llm.two_pass import TwoPassFormatter, TwoPassResult
@@ -59,11 +60,16 @@ class PocRunOptions:
 
 
 def resolve_models(raw: str | None) -> List[str]:
-    """Return sorted list of runner slugs (all if raw is None)."""
+    """ランナー一覧文字列から使用するランナー slug のリストを返す。
+
+    - raw が None/空文字の場合は「プラットフォーム別のデフォルト」を選ぶ
+      - macOS (darwin): MLX ランナー（'mlx'）
+      - それ以外（Windows / Linux 等）: OpenAI Whisper ランナー（'openai'）
+    """
     if not raw:
-        # デフォルトはクラウドWhisperを避け、ローカルMLX large-v3のみを使用
         runners = available_runners()
-        return [slug for slug in runners if slug == "mlx"] or runners
+        default_slug = "mlx" if sys.platform == "darwin" else "openai"
+        return [slug for slug in runners if slug == default_slug] or runners
     requested = [token.strip() for token in raw.split(",") if token.strip()]
     unknown = [slug for slug in requested if slug not in available_runners()]
     if unknown:
