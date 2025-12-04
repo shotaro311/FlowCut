@@ -8,13 +8,38 @@ Windows 向け FlowCut GUI パッケージング用の PyInstaller レシピ（o
 - 出力: dist/FlowCut/FlowCut.exe を含むフォルダ一式
 """
 
+from PyInstaller.utils.hooks import collect_all
+import os
+
+# whisper パッケージ一式（コード + assets）をまとめて同梱する。
+datas = [('config', 'config')]
+binaries = []
 hiddenimports = ['whisper']
+
+tmp_ret = collect_all('whisper')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+
+# さらに、実際の whisper パッケージの場所から mel_filters.npz を特定して、
+# 実行時に参照される `_internal\\whisper\\assets\\mel_filters.npz` へ明示的に配置する。
+try:
+    import whisper  # type: ignore
+
+    whisper_pkg_dir = os.path.dirname(whisper.__file__)
+    whisper_mel_filters = os.path.join(whisper_pkg_dir, "assets", "mel_filters.npz")
+    if os.path.exists(whisper_mel_filters):
+        datas.append(
+            (whisper_mel_filters, os.path.join("_internal", "whisper", "assets"))
+        )
+except Exception:
+    # build 環境で whisper が import できない場合は、通常の collect_all のみで進める
+    pass
+
 
 a = Analysis(
     ['flowcut_gui_launcher.py'],
     pathex=[],
-    binaries=[],
-    datas=[('config', 'config')],
+    binaries=binaries,
+    datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
