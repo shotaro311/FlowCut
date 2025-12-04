@@ -8,7 +8,7 @@
   . .venv/bin/activate
   pip install -r requirements-dev.txt
   ```
-- 環境変数: `.env.example` をコピーし、少なくとも `OPENAI_API_KEY` を設定。  
+- 環境変数: `.env.example` をコピーし、少なくとも `GOOGLE_API_KEY` を設定（OpenAI の LLM/API を使う場合のみ `OPENAI_API_KEY` も設定）。  
   Whisper APIを使う場合は `OPENAI_WHISPER_MODEL`（例: whisper-1）も確認。
 
 ## よく使うコマンド
@@ -63,7 +63,7 @@
    . .venv/bin/activate
    pip install -r requirements-dev.txt
    ```
-2. `.env` を `.env.example` から用意し、必要なAPIキー（特に `GOOGLE_API_KEY` / `OPENAI_API_KEY`）を設定する。
+2. `.env` を `.env.example` から用意し、必要なAPIキー（特に **`GOOGLE_API_KEY`（必須） / `OPENAI_API_KEY`（OpenAI 利用時のみ）**）を設定する。
 3. 開発環境で CLI / GUI の動作確認を行う（例: `python -m src.cli.main models`, `python -m src.cli.main gui`）。
 4. PyInstaller で `.app` を生成する（レシピは `FlowCut.spec` を想定）。
    ```bash
@@ -86,7 +86,7 @@
    .venv\Scripts\activate
    pip install -r requirements-dev.txt
    ```
-2. `.env` を `.env.example` から用意し、必要なAPIキー（特に `GOOGLE_API_KEY` / `OPENAI_API_KEY`）を設定する。
+2. `.env` を `.env.example` から用意し、必要なAPIキー（特に **`GOOGLE_API_KEY`（必須） / `OPENAI_API_KEY`（OpenAI 利用時のみ）**）を設定する。
 3. 開発環境で CLI / GUI の動作確認を行う。
    ```bash
    python -m src.cli.main models
@@ -97,6 +97,11 @@
    ```bash
    pyinstaller FlowCut_win.spec
    ```
-6. `dist/FlowCut/FlowCut.exe` が生成されるので、`dist/FlowCut/` フォルダごと zip に固めて `FlowCut-win.zip` とし、友人には「解凍 → `FlowCut.exe` ダブルクリック」で使ってもらう。
+6. `dist/FlowCut/FlowCut.exe` が生成されたら、Whisper が参照する `assets` データを dist 側にコピーする（暫定手順）。  
+   ```powershell
+   New-Item -ItemType Directory -Force -Path "dist\FlowCut\_internal\whisper\assets"
+   Copy-Item ".venv\Lib\site-packages\whisper\assets\*" "dist\FlowCut\_internal\whisper\assets\" -Recurse -Force
+   ```
+7. `dist/FlowCut/` フォルダごと zip に固めて `FlowCut-win.zip` とし、友人には「解凍 → `FlowCut.exe` ダブルクリック」で使ってもらう。
 
 ※ Windows 版で同梱する ffmpeg や Whisper ランタイムの詳細構成は `docs/plan/20251203_PLAN1.md`（Windows版 FlowCut GUI パッケージ化 PLAN）を参照。
