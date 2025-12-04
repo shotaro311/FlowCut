@@ -1,6 +1,6 @@
 """OpenAI Whisper ランナー（ローカル実行版）。
 
-Windows では OpenAI の Whisper モデル（large-v3 系 / turbo）を
+Windows では OpenAI の Whisper モデル（large-v3 系）を
 ローカルで実行することを前提とする。
 
 * 依存ライブラリ: `pip install openai-whisper`
@@ -43,7 +43,7 @@ def _load_whisper() -> Any:
         ) from exc
 
 
-def _get_model(model_name: str = "turbo") -> Any:
+def _get_model(model_name: str = "large-v3") -> Any:
     """whisper.load_model をラップし、同一プロセス内ではキャッシュする。"""
     if model_name in _MODEL_CACHE:
         return _MODEL_CACHE[model_name]
@@ -78,8 +78,10 @@ def _parse_words_from_segments(segments: List[Dict[str, Any]]) -> List[WordTimes
 @register_runner
 class OpenAIWhisperRunner(BaseTranscribeRunner):
     slug = "openai"
-    display_name = "OpenAI Whisper large-v3 (local turbo)"
-    default_model = "turbo"  # whisper.load_model の引数
+    display_name = "OpenAI Whisper large-v3 (local)"
+    # openai-whisper の `whisper.available_models()` に含まれるモデル名を指定する
+    # large-v3 は精度重視のデフォルトモデルとして採用する。
+    default_model = "large-v3"
     requires_gpu = False
 
     def transcribe(self, audio_path: Path, config: TranscriptionConfig) -> TranscriptionResult:
