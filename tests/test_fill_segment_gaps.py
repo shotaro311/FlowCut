@@ -11,25 +11,37 @@ from src.alignment.srt import SubtitleSegment
 class MockTwoPassFormatterForGapTest:
     """ギャップ埋めロジックのみをテストするための最小モック。"""
 
-    def __init__(self, fill_gaps: bool = True, max_gap_duration: float | None = None):
+    def __init__(
+        self,
+        fill_gaps: bool = True,
+        max_gap_duration: float | None = None,
+        gap_padding: float = 0.0
+    ):
         self.fill_gaps = fill_gaps
         self.max_gap_duration = max_gap_duration
+        self.gap_padding = gap_padding
 
     def _fill_segment_gaps(
         self,
         segments: list[SubtitleSegment],
         max_gap: float | None = None,
+        gap_padding: float = 0.0,
     ) -> None:
-        """本物の TwoPassFormatter._fill_segment_gaps と同一ロジック。"""
+        """本物の TwoPassFormatter._fill_segment_gaps と同一ロジック（簡易写し）。"""
         if not segments:
             return
 
         for i in range(len(segments) - 1):
             current = segments[i]
             nxt = segments[i + 1]
+
             gap = nxt.start - current.end
             if gap > 0:
                 if max_gap is not None and gap > max_gap:
+                    # max_gap超過時は、padding分だけは確保（ただしnext.startまで）
+                    if gap_padding > 0:
+                        desired_end = current.end + gap_padding
+                        current.end = min(desired_end, nxt.start)
                     continue
                 current.end = nxt.start
 
@@ -108,12 +120,39 @@ class TestFillSegmentGaps:
         formatter._fill_segment_gaps(segments)
         assert segments == []
 
-    def test_single_segment(self):
-        """セグメントが1つの場合も正常動作。"""
-        segments = [SubtitleSegment(index=1, start=0.0, end=1.0, text="唯一")]
-        formatter = MockTwoPassFormatterForGapTest(fill_gaps=True)
-        formatter._fill_segment_gaps(segments)
+
+    def test_padding_respects_next_start(self):
+        """パディングがあっても次のセグメントの開始はずらさない（paddingが切り詰められる）。"""
+        segments = [
+            SubtitleSegment(index=1, start=0.0, end=0.9, text="短い"),
+            SubtitleSegment(index=2, start=1.0, end=2.0, text="直後"),
+        ]
+        # gap = 0.1
+        # padding=0.5 -> desired_end = 1.4
+        # 但し next.start=1.0 なので、end は 1.0 になるべき。next.start は 1.0 のまま。
+        
+        # max_gap 指定なしなら問答無用でくっつく
+        formatter = MockTwoPassFormatterForGapTest(fill_gaps=True, max_gap_duration=None)
+        formatter._fill_segment_gaps(segments, gap_padding=0.5)
+
         assert segments[0].end == 1.0
+        assert segments[1].start == 1.0  # moved NOT
+        
+    def test_padding_with_max_gap_limit(self):
+        """max_gapを超えるときは、padding分だけ伸びるがnext.startで止まることの確認。"""
+        segments = [
+            SubtitleSegment(index=1, start=0.0, end=1.0, text="A"),
+            SubtitleSegment(index=2, start=10.0, end=11.0, text="B"),
+        ]
+        # gap = 9.0 -> exceed max_gap=5.0
+        # padding=0.5 -> desired_end=1.5
+        # next.start=10.0 -> no conflict
+        
+        formatter = MockTwoPassFormatterForGapTest(fill_gaps=True, max_gap_duration=5.0)
+        formatter._fill_segment_gaps(segments, max_gap=5.0, gap_padding=0.5)
+        
+        assert segments[0].end == 1.5
+        assert segments[1].start == 10.0
 
 
 class TestFillGapsIntegration:

@@ -236,6 +236,7 @@ class TwoPassFormatter:
         source_name: str | None = None,
         fill_gaps: bool = True,
         max_gap_duration: float | None = None,
+        gap_padding: float = 0.15,
     ) -> None:
         settings = get_settings().llm
         self.provider_slug = llm_provider
@@ -269,6 +270,7 @@ class TwoPassFormatter:
         # max_gap_duration: 埋める最大ギャップ秒数。None の場合は上限なし
         self.fill_gaps = fill_gaps
         self.max_gap_duration = max_gap_duration
+        self.gap_padding = gap_padding
 
     # --- logging helpers -------------------------------------------------
 
@@ -495,7 +497,11 @@ class TwoPassFormatter:
         # セグメント間の「タイムコードの空白時間」を埋めるため、
         # 次のセグメントの開始時刻まで前のセグメントの end を延長する。
         if self.fill_gaps:
-            self._fill_segment_gaps(segments, max_gap=self.max_gap_duration)
+            self._fill_segment_gaps(
+                segments,
+                max_gap=self.max_gap_duration,
+                gap_padding=self.gap_padding
+            )
 
         # Re-assign indices
         for i, seg in enumerate(segments, start=1):
@@ -507,6 +513,7 @@ class TwoPassFormatter:
         self,
         segments: List["SubtitleSegment"],
         max_gap: float | None = None,
+        gap_padding: float = 0.0,
     ) -> None:
         """
         連続する SubtitleSegment 間に存在するタイムコードの空白時間を埋める。
@@ -514,20 +521,33 @@ class TwoPassFormatter:
         具体的には、次のセグメントの start が現在の end より後ろにある場合、
         現在の end を次の start まで延長し、画面上のテロップが途切れないようにする。
 
+        さらに gap_padding (秒) が指定されている場合、現在の end に余韻（パディング）を追加する。
+        ただし、パディング追加後の end が次の start を超えてしまう（オーバーラップする）場合は、
+        次の start で止める（次の字幕の開始時刻を優先し、遅らせない）。
+
         Args:
             segments: 対象の SubtitleSegment リスト（in-place で更新）
             max_gap: 埋める最大ギャップ秒数。None の場合は上限なし（すべてのギャップを埋める）。
                      例えば 10.0 を指定すると、10秒以上のギャップは埋めない。
+            gap_padding: 各セグメントの末尾に追加する余韻時間（秒）。デフォルト0.0。
+                         例えば 0.15 を指定すると、最低でも0.15秒の余韻を確保しようとする。
+                         （ただし次の字幕開始まで）
         """
+        if not segments:
+            return
+
         if not segments:
             return
 
         for i in range(len(segments) - 1):
             current = segments[i]
             nxt = segments[i + 1]
+
+            # ギャップがある場合 -> 埋めるかどうか判定
             gap = nxt.start - current.end
+
             if gap > 0:
-                # max_gap が指定されていて、ギャップがそれを超える場合は埋めない
+                # max_gap判定: ギャップが大きすぎる場合は完全に埋めない
                 if max_gap is not None and gap > max_gap:
                     logger.debug(
                         "Gap %.2fs exceeds max_gap %.2fs; not filling (segment %d)",
@@ -535,7 +555,14 @@ class TwoPassFormatter:
                         max_gap,
                         i + 1,
                     )
+                    # ただし、gap_padding 分だけは「余韻」として確保したい
+                    if gap_padding > 0:
+                        desired_end = current.end + gap_padding
+                        # ただし絶対に次の開始を超えてはいけない
+                        current.end = min(desired_end, nxt.start)
                     continue
+
+                # ギャップが許容範囲内なら、次の開始位置まで完全に埋める（隙間ゼロ）
                 current.end = nxt.start
 
     def _ensure_trailing_coverage(
