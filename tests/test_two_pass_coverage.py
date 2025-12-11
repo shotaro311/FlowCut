@@ -72,3 +72,50 @@ def test_trailing_words_are_covered_by_fallback(monkeypatch):
     tail_word = words[-1].word
     assert any(tail_word in seg.text for seg in result.segments)
 
+
+def _words_with_internal_gap() -> List[WordTimestamp]:
+    # 単語間に明確な時間ギャップがあるデータ
+    return [
+        WordTimestamp(word="前半", start=0.0, end=0.5),
+        WordTimestamp(word="後半", start=2.0, end=2.5),
+    ]
+
+
+def test_segments_have_no_time_gaps(monkeypatch):
+    """
+    TwoPassFormatter が生成する SubtitleSegment 間に
+    タイムコード上の空白が残らないことを確認する。
+    """
+
+    def fake_call_llm(self, payload: str, model_override=None, pass_label=None):
+        # Pass1: 変更なし
+        if pass_label == "pass1":
+            return json.dumps({"operations": []})
+        # Pass2 / Pass3 / Pass4: 2行の単純な行分割を返す
+        return json.dumps(
+            {
+                "lines": [
+                    {"from": 0, "to": 0, "text": "前半"},
+                    {"from": 1, "to": 1, "text": "後半"},
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr("src.llm.validators.detect_issues", lambda lines, words: [])
+    monkeypatch.setattr(TwoPassFormatter, "_call_llm", fake_call_llm)
+
+    words = _words_with_internal_gap()
+    formatter = TwoPassFormatter(llm_provider="google")
+
+    result = formatter.run(
+        text="".join(w.word for w in words),
+        words=words,
+    )
+
+    assert result is not None
+    # 連続するすべてのセグメント間にギャップがないこと
+    segments = result.segments
+    assert len(segments) >= 2
+    for prev, nxt in zip(segments, segments[1:]):
+        assert prev.end == nxt.start
