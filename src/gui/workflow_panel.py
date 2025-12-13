@@ -44,6 +44,7 @@ class WorkflowPanel(ttk.Frame):
         self.pass2_model_var = tk.StringVar()
         self.pass3_model_var = tk.StringVar()
         self.pass4_model_var = tk.StringVar()
+        self.start_delay_var = tk.StringVar(value="0.0")
         self.advanced_visible = tk.BooleanVar(value=False)
         
         # プロファイルとモデル
@@ -130,6 +131,16 @@ class WorkflowPanel(ttk.Frame):
             command=self._toggle_advanced,
         )
         advanced_check.pack(side=tk.LEFT)
+        
+        # start_delay入力（詳細設定の横に配置）
+        ttk.Label(advanced_row, text="開始遅延(秒):").pack(side=tk.LEFT, padx=(16, 0))
+        start_delay_entry = ttk.Entry(
+            advanced_row,
+            textvariable=self.start_delay_var,
+            width=6,
+        )
+        start_delay_entry.pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Label(advanced_row, text="例: 0.2", foreground="#888888").pack(side=tk.LEFT, padx=(4, 0))
         
         # 詳細設定エリア
         self.advanced_frame = ttk.Frame(options_frame)
@@ -239,6 +250,7 @@ class WorkflowPanel(ttk.Frame):
             pass2_model=self.pass2_model_var.get().strip() or None,
             pass3_model=self.pass3_model_var.get().strip() or None,
             pass4_model=self.pass4_model_var.get().strip() or None,
+            start_delay=self._get_start_delay(),
             on_start=self._on_start,
             on_success=self._on_success,
             on_error=self._on_error,
@@ -392,6 +404,14 @@ class WorkflowPanel(ttk.Frame):
         if minutes > 0:
             return f"{minutes}分{sec}秒"
         return f"{sec}秒"
+
+    def _get_start_delay(self) -> float:
+        """start_delay入力値を取得する。無効な値は0.0を返す。"""
+        try:
+            value = float(self.start_delay_var.get().strip())
+            return max(0.0, value)  # 負の値は0.0に
+        except (ValueError, TypeError):
+            return 0.0
 
 
 __all__ = ["WorkflowPanel"]

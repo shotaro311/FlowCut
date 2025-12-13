@@ -237,6 +237,7 @@ class TwoPassFormatter:
         fill_gaps: bool = True,
         max_gap_duration: float | None = None,
         gap_padding: float = 0.15,
+        start_delay: float = 0.0,
     ) -> None:
         settings = get_settings().llm
         self.provider_slug = llm_provider
@@ -271,6 +272,9 @@ class TwoPassFormatter:
         self.fill_gaps = fill_gaps
         self.max_gap_duration = max_gap_duration
         self.gap_padding = gap_padding
+        # テロップ開始時間遅延（秒）。2番目以降のセグメントのstartをこの秒数だけ遅らせる。
+        # 最初のセグメントのstartと最後のセグメントのendは維持される。
+        self.start_delay = start_delay
 
     # --- logging helpers -------------------------------------------------
 
@@ -502,6 +506,30 @@ class TwoPassFormatter:
                 max_gap=self.max_gap_duration,
                 gap_padding=self.gap_padding
             )
+
+        # start_delay: 2番目以降のセグメントの開始時間を遅らせる
+        # 最初のセグメントのstartと最後のセグメントのendは維持
+        if self.start_delay > 0 and len(segments) > 1:
+            original_last_end = segments[-1].end
+
+            for i in range(1, len(segments)):
+                # 遅延を適用（ただし、次のセグメントの元startを超えないよう制限）
+                new_start = segments[i].start + self.start_delay
+                # オーバーラップ防止: 前のセグメントのendより後ろになるよう制限
+                if new_start < segments[i - 1].end:
+                    new_start = segments[i - 1].end
+                segments[i].start = new_start
+
+            # 遅延適用後、再度gap埋めを実行して隙間を埋める
+            if self.fill_gaps:
+                self._fill_segment_gaps(
+                    segments,
+                    max_gap=self.max_gap_duration,
+                    gap_padding=self.gap_padding
+                )
+
+            # 最後のセグメントのendを元の値に戻す
+            segments[-1].end = original_last_end
 
         # Re-assign indices
         for i, seg in enumerate(segments, start=1):

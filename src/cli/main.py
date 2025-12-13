@@ -95,6 +95,7 @@ def run(
     llm_timeout: Optional[float] = typer.Option(None, '--llm-timeout', help='LLM APIリクエストのタイムアウト秒数'),
     rewrite: Optional[bool] = typer.Option(None, '--rewrite/--no-rewrite', help='LLM整形で語尾リライトを有効化する'),
     workflow: Optional[str] = typer.Option(None, '--workflow', help='使用するLLM整形ワークフロー（例: workflow1, workflow2）。未指定なら workflow1'),
+    start_delay: float = typer.Option(0.0, '--start-delay', help='テロップ開始時間を遅らせる秒数（例: 0.2）。最初のテロップのstartと最後のendは維持される'),
     simulate: bool = typer.Option(True, '--simulate/--no-simulate', help='シミュレーションモードを切り替える'),
     verbose: bool = typer.Option(False, '--verbose', help='詳細ログを有効化'),
 ) -> None:
@@ -139,6 +140,7 @@ def run(
         rewrite=rewrite,
         llm_temperature=llm_temperature,
         llm_timeout=llm_timeout,
+        start_delay=start_delay,
     )
     if resume:
         try:

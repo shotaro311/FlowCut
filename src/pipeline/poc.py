@@ -52,6 +52,7 @@ class PocRunOptions:
     rewrite: bool | None = None
     llm_temperature: float | None = None
     llm_timeout: float | None = None
+    start_delay: float = 0.0
     progress_callback: Callable[[str, int], None] | None = None
 
     def normalized_timestamp(self) -> str:
@@ -152,6 +153,7 @@ def execute_poc_run(
                         workflow=options.workflow,
                         run_id=run_id,
                         source_name=audio_path.name,
+                        start_delay=options.start_delay,
                     )
                     # Phase 2-5: LLM passes
                     t_llm_start = time.perf_counter()
@@ -429,6 +431,7 @@ def _build_progress_metadata(
         "rewrite": options.rewrite,
         "llm_temperature": options.llm_temperature,
         "llm_timeout": options.llm_timeout,
+        "start_delay": options.start_delay,
     }
     if options.resume_source:
         metadata["resume_source"] = str(options.resume_source)

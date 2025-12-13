@@ -52,6 +52,7 @@ class GuiController:
         pass2_model: str | None = None,
         pass3_model: str | None = None,
         pass4_model: str | None = None,
+        start_delay: float = 0.0,
         on_start: Callable[[], None] | None = None,
         on_success: Callable[[List[Path], dict | None], None] | None = None,
         on_error: Callable[[Exception], None] | None = None,
@@ -89,6 +90,7 @@ class GuiController:
                         pass2_model=pass2_model,
                         pass3_model=pass3_model,
                         pass4_model=pass4_model,
+                        start_delay=start_delay,
                         progress_callback=safe_progress_callback,
                     )
                     # タイムスタンプを固定してGUI側からも出力パスを把握できるようにする
@@ -150,6 +152,7 @@ class GuiController:
         pass2_model: str | None = None,
         pass3_model: str | None = None,
         pass4_model: str | None = None,
+        start_delay: float = 0.0,
         progress_callback: Callable[[str, int], None] | None = None,
     ) -> PocRunOptions:
         """GUIから渡された設定と環境値を組み合わせてPocRunOptionsを構築する。
@@ -198,6 +201,7 @@ class GuiController:
             llm_pass3_model=p3,
             llm_pass4_model=p4,
             llm_timeout=settings.llm.request_timeout,
+            start_delay=start_delay,
             progress_callback=progress_callback,
         )
 
