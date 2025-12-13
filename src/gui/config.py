@@ -90,6 +90,30 @@ class GuiConfig:
         self._config["google_api_key"] = api_key
         self.save_config()
 
+    def get_openai_api_key(self) -> str | None:
+        """OpenAI APIキーの設定を取得する。"""
+        api_key = self._config.get("openai_api_key")
+        if isinstance(api_key, str) and api_key.strip():
+            return api_key
+        return None
+
+    def set_openai_api_key(self, api_key: str) -> None:
+        """OpenAI APIキーの設定を保存する。"""
+        self._config["openai_api_key"] = api_key
+        self.save_config()
+
+    def get_anthropic_api_key(self) -> str | None:
+        """Anthropic APIキーの設定を取得する。"""
+        api_key = self._config.get("anthropic_api_key")
+        if isinstance(api_key, str) and api_key.strip():
+            return api_key
+        return None
+
+    def set_anthropic_api_key(self, api_key: str) -> None:
+        """Anthropic APIキーの設定を保存する。"""
+        self._config["anthropic_api_key"] = api_key
+        self.save_config()
+
 
 # グローバルインスタンス
 _config_instance: GuiConfig | None = None

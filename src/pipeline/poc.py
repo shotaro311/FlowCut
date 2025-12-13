@@ -53,6 +53,9 @@ class PocRunOptions:
     llm_temperature: float | None = None
     llm_timeout: float | None = None
     start_delay: float = 0.0
+    enable_pass5: bool = False
+    pass5_max_chars: int = 17
+    pass5_model: str | None = None
     progress_callback: Callable[[str, int], None] | None = None
 
     def normalized_timestamp(self) -> str:
@@ -177,6 +180,24 @@ def execute_poc_run(
                         audio_path.name,
                         t_llm_end - t_llm_start,
                     )
+
+                    # Pass5: Claude長行改行処理（オプション）
+                    if options.enable_pass5 and subtitle_text:
+                        try:
+                            from src.llm.pass5_processor import Pass5Processor
+                            if options.progress_callback:
+                                options.progress_callback("LLM Pass 5", 98)
+                            processor = Pass5Processor(
+                                max_chars=options.pass5_max_chars,
+                                run_id=run_id,
+                                source_name=audio_path.name,
+                                model=options.pass5_model,
+                                temperature=options.llm_temperature,
+                                timeout=options.llm_timeout,
+                            )
+                            subtitle_text = processor.process(subtitle_text)
+                        except Exception as exc:
+                            logger.warning("Pass5処理に失敗しました: %s", exc)
 
                 if subtitle_text:
                     subtitle_path.parent.mkdir(parents=True, exist_ok=True)

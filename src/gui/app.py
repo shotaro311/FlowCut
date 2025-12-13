@@ -77,6 +77,12 @@ class MainWindow:
         google_key = self.config.get_google_api_key()
         if google_key:
             os.environ["GOOGLE_API_KEY"] = google_key
+        openai_key = self.config.get_openai_api_key()
+        if openai_key:
+            os.environ["OPENAI_API_KEY"] = openai_key
+        anthropic_key = self.config.get_anthropic_api_key()
+        if anthropic_key:
+            os.environ["ANTHROPIC_API_KEY"] = anthropic_key
         reload_settings()
 
     def _reload_llm_profiles_in_workflows(self) -> None:
@@ -119,36 +125,65 @@ class MainWindow:
         self.root.destroy()
 
     def _open_api_settings_dialog(self) -> None:
-        """Google APIキーの設定ダイアログを開く。"""
+        """APIキーの設定ダイアログを開く。"""
         dialog = tk.Toplevel(self.root)
         dialog.title("API設定")
+        dialog.geometry("450x200")
         dialog.transient(self.root)
         dialog.grab_set()
 
         frame = ttk.Frame(dialog, padding=16)
         frame.pack(fill=tk.BOTH, expand=True)
-
-        ttk.Label(frame, text="Google APIキー:").grid(row=0, column=0, sticky=tk.W)
-
-        current_key = self.config.get_google_api_key() or ""
-        var = tk.StringVar(value=current_key)
-        entry = ttk.Entry(frame, textvariable=var, show="*")
-        entry.grid(row=0, column=1, sticky=tk.EW, padx=(8, 0))
         frame.columnconfigure(1, weight=1)
 
+        # Google APIキー
+        ttk.Label(frame, text="Google APIキー:").grid(row=0, column=0, sticky=tk.W, pady=(0, 8))
+        google_var = tk.StringVar(value=self.config.get_google_api_key() or "")
+        google_entry = ttk.Entry(frame, textvariable=google_var, show="*", width=40)
+        google_entry.grid(row=0, column=1, sticky=tk.EW, padx=(8, 0), pady=(0, 8))
+
+        # OpenAI APIキー
+        ttk.Label(frame, text="OpenAI APIキー:").grid(row=1, column=0, sticky=tk.W, pady=(0, 8))
+        openai_var = tk.StringVar(value=self.config.get_openai_api_key() or "")
+        openai_entry = ttk.Entry(frame, textvariable=openai_var, show="*", width=40)
+        openai_entry.grid(row=1, column=1, sticky=tk.EW, padx=(8, 0), pady=(0, 8))
+
+        # Anthropic APIキー
+        ttk.Label(frame, text="Anthropic APIキー:").grid(row=2, column=0, sticky=tk.W, pady=(0, 8))
+        anthropic_var = tk.StringVar(value=self.config.get_anthropic_api_key() or "")
+        anthropic_entry = ttk.Entry(frame, textvariable=anthropic_var, show="*", width=40)
+        anthropic_entry.grid(row=2, column=1, sticky=tk.EW, padx=(8, 0), pady=(0, 8))
+
+        # ボタンフレーム
         button_frame = ttk.Frame(frame)
-        button_frame.grid(row=1, column=0, columnspan=2, pady=(12, 0), sticky=tk.E)
+        button_frame.grid(row=3, column=0, columnspan=2, pady=(12, 0), sticky=tk.E)
 
         def on_save() -> None:
-            key = var.get().strip()
-            if not key:
-                messagebox.showerror("エラー", "Google APIキーを入力してください。")
+            google_key = google_var.get().strip()
+            openai_key = openai_var.get().strip()
+            anthropic_key = anthropic_var.get().strip()
+
+            # 少なくとも1つのAPIキーが設定されていることを確認
+            if not google_key and not openai_key and not anthropic_key:
+                messagebox.showerror("エラー", "少なくとも1つのAPIキーを入力してください。")
                 return
-            self.config.set_google_api_key(key)
-            os.environ["GOOGLE_API_KEY"] = key
+
+            # Google
+            if google_key:
+                self.config.set_google_api_key(google_key)
+                os.environ["GOOGLE_API_KEY"] = google_key
+            # OpenAI
+            if openai_key:
+                self.config.set_openai_api_key(openai_key)
+                os.environ["OPENAI_API_KEY"] = openai_key
+            # Anthropic
+            if anthropic_key:
+                self.config.set_anthropic_api_key(anthropic_key)
+                os.environ["ANTHROPIC_API_KEY"] = anthropic_key
+
             reload_settings()
             self._reload_llm_profiles_in_workflows()
-            messagebox.showinfo("情報", "Google APIキーを保存しました。")
+            messagebox.showinfo("情報", "APIキーを保存しました。")
             dialog.destroy()
 
         def on_cancel() -> None:
@@ -160,7 +195,7 @@ class MainWindow:
         cancel_button = ttk.Button(button_frame, text="キャンセル", command=on_cancel)
         cancel_button.pack(side=tk.RIGHT, padx=(0, 8))
 
-        entry.focus_set()
+        google_entry.focus_set()
 
 
 def run_gui() -> None:

@@ -26,9 +26,17 @@ def main() -> None:
         # _MEIPASS: PyInstaller がランタイムで展開するディレクトリ（Resources や Frameworks）
         meipass = getattr(sys, "_MEIPASS", None)
         if meipass:
-            os.environ["PATH"] = str(meipass) + os.pathsep + os.environ.get("PATH", "")
-        # 念のため MacOS ディレクトリも追加
+            meipass_path = Path(meipass)
+            # ffmpeg_bin サブディレクトリを優先的にPATHに追加
+            ffmpeg_bin = meipass_path / "ffmpeg_bin"
+            if ffmpeg_bin.exists():
+                os.environ["PATH"] = str(ffmpeg_bin) + os.pathsep + os.environ.get("PATH", "")
+            os.environ["PATH"] = str(meipass_path) + os.pathsep + os.environ.get("PATH", "")
+        # 念のため MacOS ディレクトリと ffmpeg_bin も追加
         bundle_dir = Path(sys.executable).resolve().parent
+        ffmpeg_bin_bundle = bundle_dir / "ffmpeg_bin"
+        if ffmpeg_bin_bundle.exists():
+            os.environ["PATH"] = str(ffmpeg_bin_bundle) + os.pathsep + os.environ.get("PATH", "")
         os.environ["PATH"] = str(bundle_dir) + os.pathsep + os.environ.get("PATH", "")
 
     # Make relative paths (config/, logs/, output/ etc.) resolve from project root

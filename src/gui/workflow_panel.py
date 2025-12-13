@@ -47,6 +47,10 @@ class WorkflowPanel(ttk.Frame):
         self.start_delay_var = tk.StringVar(value="0.0")
         self.advanced_visible = tk.BooleanVar(value=False)
         
+        # Pass5関連変数
+        self.pass5_enabled_var = tk.BooleanVar(value=False)
+        self.pass5_max_chars_var = tk.StringVar(value="17")
+        
         # プロファイルとモデル
         self._profiles = list_profiles()
         self._models_by_provider = list_models_by_provider()
@@ -162,6 +166,23 @@ class WorkflowPanel(ttk.Frame):
             combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
             self._pass_model_combos.append(combo)
         
+        # Pass5設定（LLMオプション内に追加）
+        pass5_row = ttk.Frame(options_frame)
+        pass5_row.pack(fill=tk.X, pady=(4, 2))
+        ttk.Checkbutton(
+            pass5_row,
+            text="Pass5: Claude長行改行",
+            variable=self.pass5_enabled_var,
+        ).pack(side=tk.LEFT)
+        ttk.Label(pass5_row, text="文字数:").pack(side=tk.LEFT, padx=(16, 0))
+        pass5_chars_entry = ttk.Entry(
+            pass5_row,
+            textvariable=self.pass5_max_chars_var,
+            width=4,
+        )
+        pass5_chars_entry.pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Label(pass5_row, text="文字超過時に改行", foreground="#888888").pack(side=tk.LEFT, padx=(4, 0))
+        
         # プログレスバー
         self.progress = ttk.Progressbar(self, mode="determinate", maximum=100)
         self.progress.pack(fill=tk.X, pady=(4, 4))
@@ -251,6 +272,8 @@ class WorkflowPanel(ttk.Frame):
             pass3_model=self.pass3_model_var.get().strip() or None,
             pass4_model=self.pass4_model_var.get().strip() or None,
             start_delay=self._get_start_delay(),
+            enable_pass5=self.pass5_enabled_var.get(),
+            pass5_max_chars=self._get_pass5_max_chars(),
             on_start=self._on_start,
             on_success=self._on_success,
             on_error=self._on_error,
@@ -345,6 +368,10 @@ class WorkflowPanel(ttk.Frame):
         """プロファイル変更時の処理。"""
         name = self.llm_profile_var.get()
         if name:
+            profile = get_profile(name)
+            if profile:
+                # プロバイダーを更新
+                self.llm_provider_var.set(profile.provider or "google")
             self._apply_profile_to_pass_models(name)
             self.config.set_llm_profile(name)
 
@@ -412,6 +439,16 @@ class WorkflowPanel(ttk.Frame):
             return max(0.0, value)  # 負の値は0.0に
         except (ValueError, TypeError):
             return 0.0
+
+    def _get_pass5_max_chars(self) -> int:
+        """Pass5の文字数閾値を取得する。無効な値や8未満はデフォルト17を返す。"""
+        try:
+            value = int(self.pass5_max_chars_var.get().strip())
+            if value < 8:
+                return 17  # 最小8文字未満はデフォルト
+            return value
+        except (ValueError, TypeError):
+            return 17
 
 
 __all__ = ["WorkflowPanel"]
