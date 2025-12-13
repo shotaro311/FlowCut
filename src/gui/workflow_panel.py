@@ -264,9 +264,16 @@ class WorkflowPanel(ttk.Frame):
             total_cost = float(metrics.get("total_cost_usd") or 0.0)
             elapsed_sec = float(metrics.get("total_elapsed_sec") or 0.0)
             time_str = self._format_elapsed(elapsed_sec)
-            self.metrics_var.set(
-                f"トークン: {int(total_tokens)} / コスト: ${total_cost:.3f} / 時間: {time_str}"
-            )
+            
+            metrics_text = f"トークン: {int(total_tokens)} / コスト: ${total_cost:.3f} / 時間: {time_str}"
+            
+            # ログフォルダ情報があれば追加
+            log_dir = metrics.get("log_dir")
+            if log_dir:
+                log_folder_name = Path(log_dir).name
+                metrics_text += f" / ログ: {log_folder_name}"
+            
+            self.metrics_var.set(metrics_text)
         else:
             self.metrics_var.set("")
 

@@ -20,6 +20,7 @@ temp/progress/
 temp/poc_samples/
 
 
+
 # Virtual environments
 .venv/
 .venv-gui/
@@ -48,3 +49,8 @@ samples/*.m4a
 node_modules
 node_modules
 node_modules
+
+
+# Sample files
+docs/sample
+

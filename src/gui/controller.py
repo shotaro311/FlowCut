@@ -109,6 +109,16 @@ class GuiController:
                         total_elapsed_sec=elapsed_sec,
                     )
 
+                    # ログを収集して保存
+                    log_dir = self._collect_and_save_logs(
+                        audio_path=audio_path,
+                        model_slugs=model_slugs,
+                        timestamp=options.timestamp,
+                        subtitle_dir=subtitle_dir,
+                    )
+                    if log_dir and metrics:
+                        metrics["log_dir"] = str(log_dir)
+
                     self._notify(on_success, result_paths, metrics)
                 except Exception as exc:
                     self._notify(on_error, exc)
@@ -284,10 +294,71 @@ class GuiController:
         with self._lock:
             return [wf_id for wf_id, info in self.workflows.items() if info.is_running]
     
-    def stop_workflow(self, workflow_id: str) -> bool:
+    def stop_workflow(self, workflow_id: str) -> None:
         """指定されたワークフローを停止する（実装は将来対応）。"""
-        # TODO: スレッドの停止を実装する必要がある
-        return False
+        # TODO: 実装は難しいので一旦スキップ
+        pass
+
+    def _collect_and_save_logs(
+        self,
+        *,
+        audio_path: Path,
+        model_slugs: Sequence[str],
+        timestamp: str,
+        subtitle_dir: Path,
+    ) -> Path | None:
+        """ログファイルを収集し、出力ディレクトリ内のログフォルダに保存する。
+
+        Args:
+            audio_path: 音声ファイルパス
+            model_slugs: モデルスラッグのリスト
+            timestamp: タイムスタンプ
+            subtitle_dir: SRT出力先ディレクトリ
+
+        Returns:
+            ログフォルダのパス（作成された場合）、失敗時は None
+        """
+        import shutil
+
+        # ログソースディレクトリ
+        project_root = Path.cwd()
+        llm_raw_dir = project_root / "logs" / "llm_raw"
+        poc_samples_dir = project_root / "temp" / "poc_samples"
+        progress_dir = project_root / "temp" / "progress"
+
+        # 出力先ログフォルダ名を構築
+        audio_basename = audio_path.stem
+        model_slug = model_slugs[0] if model_slugs else "mlx"
+        log_folder_name = f"{audio_basename}_{model_slug}_{timestamp}_logs"
+        log_output_dir = subtitle_dir / log_folder_name
+
+        try:
+            log_output_dir.mkdir(parents=True, exist_ok=True)
+
+            # 各ログディレクトリをコピー
+            if llm_raw_dir.exists():
+                dest_llm_raw = log_output_dir / "llm_raw"
+                if dest_llm_raw.exists():
+                    shutil.rmtree(dest_llm_raw)
+                shutil.copytree(llm_raw_dir, dest_llm_raw)
+
+            if poc_samples_dir.exists():
+                dest_poc_samples = log_output_dir / "poc_samples"
+                if dest_poc_samples.exists():
+                    shutil.rmtree(dest_poc_samples)
+                shutil.copytree(poc_samples_dir, dest_poc_samples)
+
+            if progress_dir.exists():
+                dest_progress = log_output_dir / "progress"
+                if dest_progress.exists():
+                    shutil.rmtree(dest_progress)
+                shutil.copytree(progress_dir, dest_progress)
+
+            return log_output_dir
+        except Exception as e:
+            # ログコピー失敗は致命的エラーではないのでログを出して継続
+            print(f"Warning: Failed to copy logs: {e}")
+            return None
 
 
 __all__ = ["GuiController"]
