@@ -1,6 +1,6 @@
-"""Pass5: Claude長行改行処理（Anthropic専用）。
+"""Pass5: 長行改行処理（マルチプロバイダー対応）。
 
-SRT出力後の後処理として、指定文字数を超える行のみをClaudeで改行する。
+SRT出力後の後処理として、指定文字数を超える行のみをLLMで改行する。
 タイムコードは変更しない。
 """
 from __future__ import annotations
@@ -13,7 +13,6 @@ from typing import List
 from src.config import get_settings
 from src.llm.formatter import FormatterError, FormatterRequest
 from src.llm.prompts import PromptPayload
-from src.llm.providers.anthropic_provider import AnthropicClaudeProvider
 from src.llm.usage_metrics import record_pass_time
 import time
 
@@ -78,10 +77,35 @@ def entries_to_srt(entries: List[SrtEntry]) -> str:
     return '\n\n'.join(blocks) + '\n'
 
 
+def _get_provider_for_model(model: str) -> str:
+    """モデル名からプロバイダーを判定する。"""
+    model_lower = model.lower()
+    if model_lower.startswith("gemini"):
+        return "google"
+    elif model_lower.startswith("gpt"):
+        return "openai"
+    elif model_lower.startswith("claude"):
+        return "anthropic"
+    return "anthropic"  # デフォルトはanthropic
+
+
+def _get_llm_provider(provider: str):
+    """プロバイダースラグからプロバイダーインスタンスを取得する。"""
+    if provider == "google":
+        from src.llm.providers.google_genai_provider import GoogleGenAIProvider
+        return GoogleGenAIProvider()
+    elif provider == "openai":
+        from src.llm.providers.openai_provider import OpenAIProvider
+        return OpenAIProvider()
+    else:  # anthropic
+        from src.llm.providers.anthropic_provider import AnthropicClaudeProvider
+        return AnthropicClaudeProvider()
+
+
 class Pass5Processor:
-    """SRT長行改行処理（Anthropic Claude専用）。
+    """SRT長行改行処理（マルチプロバイダー対応）。
     
-    指定文字数を超える行のみをClaudeに渡して改行させる。
+    指定文字数を超える行のみをLLMに渡して改行させる。
     タイムコードは絶対に変更しない。
     """
 
@@ -92,6 +116,7 @@ class Pass5Processor:
         run_id: str | None = None,
         source_name: str | None = None,
         model: str | None = None,
+        provider: str | None = None,
         temperature: float | None = None,
         timeout: float | None = None,
     ) -> None:
@@ -101,47 +126,69 @@ class Pass5Processor:
         self.max_chars = max_chars
         self.run_id = run_id
         self.source_name = source_name
-        self.model = model
+        self.model = model or "claude-sonnet-4-5"
         self.temperature = temperature
         self.timeout = timeout
-        self._provider = AnthropicClaudeProvider()
+        
+        # プロバイダー決定（明示指定 > モデル名から推測 > デフォルト）
+        if provider:
+            self.provider_slug = provider
+        elif model:
+            self.provider_slug = _get_provider_for_model(model)
+        else:
+            self.provider_slug = "anthropic"
+        
+        self._provider = _get_llm_provider(self.provider_slug)
 
     def _build_prompt(self, long_lines: List[str]) -> str:
         """長行改行用のプロンプトを構築する。"""
         lines_text = "\n".join(f"- {line}" for line in long_lines)
         return (
-            f"最終出力のsrtファイルの文章から{self.max_chars}文字を超える行のみ、"
-            "適切な位置で改行してください。\n\n"
-            "※注意事項\n"
-            "・改行の位置は意味のまとまりを意識すること\n"
-            f"・{self.max_chars}文字を超えない行は一切改行不要！！\n"
-            "・タイムコードは絶対に変更しないこと\n\n"
-            "【処理対象の行】\n"
+            f"指定された文字数（{self.max_chars}文字）を超える行に対し、"
+            "意味のまとまりが良い位置で改行を挿入してください。\n\n"
+            "# 処理ルール\n"
+            f"1. {self.max_chars}文字を超える行のみ改行を入れること\n"
+            "2. タイムコードやインデックスは絶対に変更しないこと\n"
+            "3. 単なるテキストのみを出力すること（マークダウンや補足説明は不可）\n\n"
+            "# 入力例\n"
+            "- これはとても長い文章で指定された文字数を大幅に超えているため適切な位置で改行を入れる必要があります\n\n"
+            "# 出力例（max_chars=15の場合）\n"
+            "これはとても長い文章で\n"
+            "指定された文字数を大幅に超えているため\n"
+            "適切な位置で改行を入れる必要があります\n"
+            "# 処理対象\n"
             f"{lines_text}\n\n"
-            "【出力形式】\n"
-            "各行を改行後のテキストで返してください。元の行と同じ順序で、1行ずつ区切って返してください。\n"
-            "改行が必要な場所には実際の改行を入れてください。\n"
-            "説明文は不要です。処理結果のテキストのみを返してください。"
+            "# 出力\n"
+            "各行を改行後のテキストで返してください。元の行と同じ順序で出力してください。"
         )
 
-    def _call_claude(self, prompt: str) -> str:
-        """Claudeを呼び出して結果を取得する。"""
-        settings = get_settings().llm
-        
+    def _call_llm(self, prompt: str) -> str:
+        """LLMを呼び出して結果を取得する。"""
         metadata = {}
-        if self.model:
+        
+        # プロバイダー固有のモデル指定
+        if self.provider_slug == "anthropic":
             metadata["anthropic_model"] = self.model
+            metadata["anthropic_max_tokens"] = 4096
+        elif self.provider_slug == "openai":
+            metadata["openai_model"] = self.model
+        elif self.provider_slug == "google":
+            metadata["google_model"] = self.model
+            
         if self.run_id:
             metadata["run_id"] = self.run_id
         if self.source_name:
             metadata["source_name"] = self.source_name
         metadata["pass_label"] = "pass5"
-        metadata["anthropic_max_tokens"] = 4096
         
-        payload = PromptPayload(system_prompt="", user_prompt=prompt)
+        system_prompt = (
+            "あなたはSRT字幕の長行改行を行う専門のアシスタントです。"
+            "指示に従い、正確にフォーマットしてください。余計な説明は不要です。"
+        )
+        payload = PromptPayload(system_prompt=system_prompt, user_prompt=prompt)
         request = FormatterRequest(
             block_text="",
-            provider="anthropic",
+            provider=self.provider_slug,
             rewrite=False,
             metadata=metadata,
             line_max_chars=float(self.max_chars),
@@ -185,15 +232,18 @@ class Pass5Processor:
             logger.info("Pass5: 長行がないためスキップ（max_chars=%d）", self.max_chars)
             return srt_text
         
-        logger.info("Pass5: %d件の長行を処理します（max_chars=%d）", len(long_lines), self.max_chars)
+        logger.info(
+            "Pass5: %d件の長行を処理します（max_chars=%d, provider=%s, model=%s）", 
+            len(long_lines), self.max_chars, self.provider_slug, self.model
+        )
         
-        # Claudeを呼び出して改行処理
+        # LLMを呼び出して改行処理
         t_start = time.perf_counter()
         try:
             prompt = self._build_prompt(long_lines)
-            result = self._call_claude(prompt)
+            result = self._call_llm(prompt)
         except FormatterError as exc:
-            logger.warning("Pass5: Claude呼び出しに失敗しました: %s", exc)
+            logger.warning("Pass5: LLM呼び出しに失敗しました: %s", exc)
             return srt_text
         t_end = time.perf_counter()
         

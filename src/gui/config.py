@@ -114,6 +114,66 @@ class GuiConfig:
         self._config["anthropic_api_key"] = api_key
         self.save_config()
 
+    # --- Pass1-5モデル設定 ---
+
+    def get_pass_models(self) -> dict[str, str]:
+        """Pass1-5のモデル設定を取得する。"""
+        models = self._config.get("pass_models", {})
+        if not isinstance(models, dict):
+            return {}
+        return models
+
+    def set_pass_model(self, pass_name: str, model: str) -> None:
+        """特定Passのモデル設定を保存する。"""
+        if "pass_models" not in self._config:
+            self._config["pass_models"] = {}
+        self._config["pass_models"][pass_name] = model
+        self.save_config()
+
+    def get_pass_model(self, pass_name: str, default: str = "") -> str:
+        """特定Passのモデル設定を取得する。"""
+        models = self.get_pass_models()
+        return models.get(pass_name, default)
+
+    # --- 開始遅延 ---
+
+    def get_start_delay(self) -> float:
+        """開始遅延の設定を取得する。"""
+        delay = self._config.get("start_delay", 0.0)
+        try:
+            return float(delay)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def set_start_delay(self, delay: float) -> None:
+        """開始遅延の設定を保存する。"""
+        self._config["start_delay"] = delay
+        self.save_config()
+
+    # --- Pass5設定 ---
+
+    def get_pass5_enabled(self) -> bool:
+        """Pass5の有効/無効を取得する。"""
+        return bool(self._config.get("pass5_enabled", False))
+
+    def set_pass5_enabled(self, enabled: bool) -> None:
+        """Pass5の有効/無効を保存する。"""
+        self._config["pass5_enabled"] = enabled
+        self.save_config()
+
+    def get_pass5_max_chars(self) -> int:
+        """Pass5の文字数閾値を取得する。"""
+        chars = self._config.get("pass5_max_chars", 17)
+        try:
+            return int(chars)
+        except (TypeError, ValueError):
+            return 17
+
+    def set_pass5_max_chars(self, chars: int) -> None:
+        """Pass5の文字数閾値を保存する。"""
+        self._config["pass5_max_chars"] = chars
+        self.save_config()
+
 
 # グローバルインスタンス
 _config_instance: GuiConfig | None = None

@@ -56,6 +56,7 @@ class GuiController:
         enable_pass5: bool = False,
         pass5_max_chars: int = 17,
         pass5_model: str | None = None,
+        pass5_provider: str | None = None,
         on_start: Callable[[], None] | None = None,
         on_success: Callable[[List[Path], dict | None], None] | None = None,
         on_error: Callable[[Exception], None] | None = None,
@@ -97,6 +98,7 @@ class GuiController:
                         enable_pass5=enable_pass5,
                         pass5_max_chars=pass5_max_chars,
                         pass5_model=pass5_model,
+                        pass5_provider=pass5_provider,
                         progress_callback=safe_progress_callback,
                     )
                     # タイムスタンプを固定してGUI側からも出力パスを把握できるようにする
@@ -162,6 +164,7 @@ class GuiController:
         enable_pass5: bool = False,
         pass5_max_chars: int = 17,
         pass5_model: str | None = None,
+        pass5_provider: str | None = None,
         progress_callback: Callable[[str, int], None] | None = None,
     ) -> PocRunOptions:
         """GUIから渡された設定と環境値を組み合わせてPocRunOptionsを構築する。
@@ -214,6 +217,7 @@ class GuiController:
             enable_pass5=enable_pass5,
             pass5_max_chars=pass5_max_chars,
             pass5_model=pass5_model,
+            pass5_provider=pass5_provider,
             progress_callback=progress_callback,
         )
 

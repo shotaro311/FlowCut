@@ -56,6 +56,7 @@ class PocRunOptions:
     enable_pass5: bool = False
     pass5_max_chars: int = 17
     pass5_model: str | None = None
+    pass5_provider: str | None = None
     progress_callback: Callable[[str, int], None] | None = None
 
     def normalized_timestamp(self) -> str:
@@ -192,6 +193,7 @@ def execute_poc_run(
                                 run_id=run_id,
                                 source_name=audio_path.name,
                                 model=options.pass5_model,
+                                provider=options.pass5_provider,
                                 temperature=options.llm_temperature,
                                 timeout=options.llm_timeout,
                             )
