@@ -75,8 +75,10 @@ class WorkflowPanel(ttk.Frame):
         # ワークフロー選択
         self.workflow_var = tk.StringVar(value="workflow1")
         
-        # 動画から抽出した音声を保存するか
-        self.keep_extracted_audio_var = tk.BooleanVar(value=False)
+        # オプション設定
+        self.keep_extracted_audio_var = tk.BooleanVar(value=False)  # 抽出音声保存
+        self.save_logs_var = tk.BooleanVar(value=False)  # ログ保存
+        self.notify_on_complete_var = tk.BooleanVar(value=False)  # 完了通知
         
         # 全モデルリスト
         self._all_models = _get_all_models()
@@ -203,17 +205,36 @@ class WorkflowPanel(ttk.Frame):
         pass5_chars_entry.bind("<FocusOut>", self._on_pass5_chars_changed)
         ttk.Label(pass5_chars_row, text="文字超過時に改行", foreground="#888888").pack(side=tk.LEFT, padx=(4, 0))
         
-        # 動画から抽出した音声を保存するか
-        keep_audio_row = ttk.Frame(options_frame)
-        keep_audio_row.pack(fill=tk.X, pady=(8, 2))
+        # オプションセクション
+        extra_options_frame = ttk.LabelFrame(self, text="オプション")
+        extra_options_frame.pack(fill=tk.X, pady=(8, 8))
+        
+        # 抽出音声を保存
         keep_audio_check = ttk.Checkbutton(
-            keep_audio_row,
-            text="動画から抽出した音声ファイルを保存",
+            extra_options_frame,
+            text="抽出音声を保存",
             variable=self.keep_extracted_audio_var,
             command=self._on_keep_extracted_audio_changed,
         )
-        keep_audio_check.pack(side=tk.LEFT)
-        ttk.Label(keep_audio_row, text="（動画入力時のみ）", foreground="#888888").pack(side=tk.LEFT, padx=(4, 0))
+        keep_audio_check.pack(anchor=tk.W, padx=4, pady=2)
+        
+        # ログを保存
+        save_logs_check = ttk.Checkbutton(
+            extra_options_frame,
+            text="ログを保存",
+            variable=self.save_logs_var,
+            command=self._on_save_logs_changed,
+        )
+        save_logs_check.pack(anchor=tk.W, padx=4, pady=2)
+        
+        # 完了時に通知
+        notify_check = ttk.Checkbutton(
+            extra_options_frame,
+            text="完了時に通知",
+            variable=self.notify_on_complete_var,
+            command=self._on_notify_on_complete_changed,
+        )
+        notify_check.pack(anchor=tk.W, padx=4, pady=2)
         
         # プログレスバー
         self.progress = ttk.Progressbar(self, mode="determinate", maximum=100)
@@ -275,8 +296,10 @@ class WorkflowPanel(ttk.Frame):
         # ワークフロー設定
         self.workflow_var.set(self.config.get_workflow())
         
-        # 抽出音声保存設定
+        # オプション設定
         self.keep_extracted_audio_var.set(self.config.get_keep_extracted_audio())
+        self.save_logs_var.set(self.config.get_save_logs())
+        self.notify_on_complete_var.set(self.config.get_notify_on_complete())
 
     # --- イベントハンドラ（設定保存） ---
 
@@ -312,6 +335,14 @@ class WorkflowPanel(ttk.Frame):
     def _on_keep_extracted_audio_changed(self) -> None:
         """抽出音声保存設定変更時に設定を保存。"""
         self.config.set_keep_extracted_audio(self.keep_extracted_audio_var.get())
+
+    def _on_save_logs_changed(self) -> None:
+        """ログ保存設定変更時に設定を保存。"""
+        self.config.set_save_logs(self.save_logs_var.get())
+
+    def _on_notify_on_complete_changed(self) -> None:
+        """完了通知設定変更時に設定を保存。"""
+        self.config.set_notify_on_complete(self.notify_on_complete_var.get())
 
     def select_file(self) -> None:
         """メディアファイル（音声/動画）を選択する。"""
@@ -378,6 +409,7 @@ class WorkflowPanel(ttk.Frame):
             pass5_model=pass5_model,
             pass5_provider=pass5_provider,
             keep_extracted_audio=self.keep_extracted_audio_var.get(),
+            save_logs=self.save_logs_var.get(),
             on_start=self._on_start,
             on_success=self._on_success,
             on_error=self._on_error,
@@ -418,6 +450,15 @@ class WorkflowPanel(ttk.Frame):
             self.metrics_var.set(
                 f"トークン: {total_tokens:,} / コスト: ${total_cost:.4f} / 時間: {self._format_elapsed(elapsed_sec)}{stage_info}"
             )
+        
+        # 完了通知（有効の場合）
+        if self.notify_on_complete_var.get():
+            try:
+                from src.utils.notification import send_notification
+                output_name = output_paths[-1].name if output_paths else "完了"
+                send_notification("FlowCut", f"字幕生成が完了しました: {output_name}")
+            except Exception:
+                pass  # 通知失敗は無視
 
     def _on_error(self, exc: Exception) -> None:
         """エラー時のコールバック。"""

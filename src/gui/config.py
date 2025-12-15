@@ -200,6 +200,28 @@ class GuiConfig:
         self._config["keep_extracted_audio"] = keep
         self.save_config()
 
+    # --- ログ保存設定 ---
+
+    def get_save_logs(self) -> bool:
+        """ログを保存するかどうかを取得する。"""
+        return bool(self._config.get("save_logs", False))
+
+    def set_save_logs(self, save: bool) -> None:
+        """ログを保存するかどうかを保存する。"""
+        self._config["save_logs"] = save
+        self.save_config()
+
+    # --- 完了通知設定 ---
+
+    def get_notify_on_complete(self) -> bool:
+        """完了時に通知するかどうかを取得する。"""
+        return bool(self._config.get("notify_on_complete", False))
+
+    def set_notify_on_complete(self, notify: bool) -> None:
+        """完了時に通知するかどうかを保存する。"""
+        self._config["notify_on_complete"] = notify
+        self.save_config()
+
 
 # グローバルインスタンス
 _config_instance: GuiConfig | None = None

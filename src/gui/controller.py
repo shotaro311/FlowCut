@@ -59,6 +59,7 @@ class GuiController:
         pass5_model: str | None = None,
         pass5_provider: str | None = None,
         keep_extracted_audio: bool = False,
+        save_logs: bool = False,
         on_start: Callable[[], None] | None = None,
         on_success: Callable[[List[Path], dict | None], None] | None = None,
         on_error: Callable[[Exception], None] | None = None,
@@ -123,15 +124,16 @@ class GuiController:
                         total_elapsed_sec=elapsed_sec,
                     )
 
-                    # ログを収集して保存
-                    log_dir = self._collect_and_save_logs(
-                        audio_path=audio_path,
-                        model_slugs=model_slugs,
-                        timestamp=options.timestamp,
-                        subtitle_dir=subtitle_dir,
-                    )
-                    if log_dir and metrics:
-                        metrics["log_dir"] = str(log_dir)
+                    # ログを収集して保存（save_logs=Trueの場合のみ）
+                    if save_logs:
+                        log_dir = self._collect_and_save_logs(
+                            audio_path=audio_path,
+                            model_slugs=model_slugs,
+                            timestamp=options.timestamp,
+                            subtitle_dir=subtitle_dir,
+                        )
+                        if log_dir and metrics:
+                            metrics["log_dir"] = str(log_dir)
 
                     self._notify(on_success, result_paths, metrics)
                 except Exception as exc:
