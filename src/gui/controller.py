@@ -52,6 +52,7 @@ class GuiController:
         pass2_model: str | None = None,
         pass3_model: str | None = None,
         pass4_model: str | None = None,
+        save_logs: bool = False,
         on_start: Callable[[], None] | None = None,
         on_success: Callable[[List[Path], dict | None], None] | None = None,
         on_error: Callable[[Exception], None] | None = None,
@@ -89,6 +90,7 @@ class GuiController:
                         pass2_model=pass2_model,
                         pass3_model=pass3_model,
                         pass4_model=pass4_model,
+                        save_logs=save_logs,
                         progress_callback=safe_progress_callback,
                     )
                     # タイムスタンプを固定してGUI側からも出力パスを把握できるようにする
@@ -107,6 +109,7 @@ class GuiController:
                         model_slugs=model_slugs,
                         timestamp=options.timestamp,
                         total_elapsed_sec=elapsed_sec,
+                        metrics_root=self._resolve_metrics_root(options),
                     )
 
                     self._notify(on_success, result_paths, metrics)
@@ -140,6 +143,7 @@ class GuiController:
         pass2_model: str | None = None,
         pass3_model: str | None = None,
         pass4_model: str | None = None,
+        save_logs: bool = False,
         progress_callback: Callable[[str, int], None] | None = None,
     ) -> PocRunOptions:
         """GUIから渡された設定と環境値を組み合わせてPocRunOptionsを構築する。
@@ -189,7 +193,14 @@ class GuiController:
             llm_pass4_model=p4,
             llm_timeout=settings.llm.request_timeout,
             progress_callback=progress_callback,
+            save_logs=save_logs,
         )
+
+    def _resolve_metrics_root(self, options: PocRunOptions) -> Path:
+        """メトリクス（logs/metrics）の探索先を決定する。"""
+        if options.save_logs:
+            return options.subtitle_dir / "logs" / "metrics"
+        return Path("logs/metrics")
 
     def _collect_output_paths(
         self,
@@ -215,6 +226,8 @@ class GuiController:
         model_slugs: Sequence[str],
         timestamp: str | None,
         total_elapsed_sec: float,
+        *,
+        metrics_root: Path | None = None,
     ) -> dict | None:
         """logs/metrics 配下のメトリクスを集計し、GUI向けの簡易サマリを返す。
 
@@ -230,8 +243,8 @@ class GuiController:
                 "metrics_files_found": 0,
             }
 
-        metrics_root = Path("logs/metrics")
-        if not metrics_root.exists():
+        root = metrics_root or Path("logs/metrics")
+        if not root.exists():
             return {
                 "total_tokens": 0,
                 "total_cost_usd": 0.0,
@@ -248,7 +261,7 @@ class GuiController:
         for slug in model_slugs:
             run_id = f"{audio_path.stem}_{slug}_{timestamp}"
             pattern = f"{audio_path.name}_*_{run_id}_metrics.json"
-            for path in metrics_root.glob(pattern):
+            for path in root.glob(pattern):
                 try:
                     data = json.loads(path.read_text(encoding="utf-8"))
                 except Exception:

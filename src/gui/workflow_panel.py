@@ -47,6 +47,7 @@ class WorkflowPanel(ttk.Frame):
         self.pass3_model_var = tk.StringVar()
         self.pass4_model_var = tk.StringVar()
         self.advanced_visible = tk.BooleanVar(value=False)
+        self.save_logs_var = tk.BooleanVar(value=False)
         
         # プロファイルとモデル
         self._profiles = list_profiles()
@@ -133,6 +134,14 @@ class WorkflowPanel(ttk.Frame):
             command=self._toggle_advanced,
         )
         advanced_check.pack(side=tk.LEFT)
+
+        # ログ保存トグル（デバッグ用）
+        save_logs_check = ttk.Checkbutton(
+            advanced_row,
+            text="ログ保存",
+            variable=self.save_logs_var,
+        )
+        save_logs_check.pack(side=tk.LEFT, padx=(12, 0))
         
         # 詳細設定エリア
         self.advanced_frame = ttk.Frame(options_frame)
@@ -275,6 +284,7 @@ class WorkflowPanel(ttk.Frame):
             pass2_model=self.pass2_model_var.get().strip() or None,
             pass3_model=self.pass3_model_var.get().strip() or None,
             pass4_model=self.pass4_model_var.get().strip() or None,
+            save_logs=bool(self.save_logs_var.get()),
             on_start=self._on_start,
             on_success=self._on_success,
             on_error=self._on_error,

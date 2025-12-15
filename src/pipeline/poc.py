@@ -53,6 +53,7 @@ class PocRunOptions:
     llm_temperature: float | None = None
     llm_timeout: float | None = None
     progress_callback: Callable[[str, int], None] | None = None
+    save_logs: bool = False
 
     def normalized_timestamp(self) -> str:
         # ファイル名の衝突を避けるため、秒まで含めたタイムスタンプを使用（例: 20251124T125830）
@@ -105,6 +106,21 @@ def execute_poc_run(
 
     timestamp = options.normalized_timestamp()
     saved_paths: List[Path] = []
+    logs_root: Path | None = None
+    json_output_dir = options.output_dir
+    progress_dir = options.progress_dir
+    metrics_output_dir: Path | None = None
+    raw_llm_log_dir: Path | None = None
+    enforce_file_limits = True
+
+    if options.save_logs:
+        # 出力先（subtitle_dir）直下へ logs/ を作り、必要な成果物をまとめる
+        logs_root = options.subtitle_dir / "logs"
+        json_output_dir = logs_root / "poc_samples"
+        progress_dir = logs_root / "progress"
+        metrics_output_dir = logs_root / "metrics"
+        raw_llm_log_dir = logs_root / "llm_raw"
+        enforce_file_limits = False
 
     for slug in models:
         runner = get_runner(slug)
@@ -132,8 +148,14 @@ def execute_poc_run(
             )
             blocks = build_single_block(result)
             run_id = f"{audio_path.stem}_{slug}_{timestamp}"
-            output_path = options.output_dir / f"{run_id}.json"
-            save_result(result, output_path, blocks=blocks)
+            output_path = json_output_dir / f"{run_id}.json"
+            save_result(
+                result,
+                output_path,
+                blocks=blocks,
+                enforce_file_limit=enforce_file_limits,
+            )
+            saved_paths.append(output_path)
 
             subtitle_path: Path | None = None
             if options.llm_provider:
@@ -153,6 +175,7 @@ def execute_poc_run(
                         workflow=options.workflow,
                         run_id=run_id,
                         source_name=audio_path.name,
+                        raw_log_dir=raw_llm_log_dir,
                     )
                     # Phase 2-5: LLM passes
                     t_llm_start = time.perf_counter()
@@ -181,13 +204,14 @@ def execute_poc_run(
                     subtitle_path.parent.mkdir(parents=True, exist_ok=True)
                     subtitle_path.write_text(subtitle_text, encoding="utf-8")
                     logger.info("SRTを保存しました: %s", subtitle_path)
+                    saved_paths.append(subtitle_path)
 
             save_progress_snapshot(
                 run_id=run_id,
                 audio_path=audio_path,
                 runner_slug=slug,
                 blocks=blocks,
-                progress_dir=options.progress_dir,
+                progress_dir=progress_dir,
                 metadata=_build_progress_metadata(
                     options,
                     result.metadata,
@@ -195,6 +219,7 @@ def execute_poc_run(
                     subtitle_path=subtitle_path,
                 ),
                 llm_provider=options.llm_provider,
+                enforce_file_limit=enforce_file_limits,
             )
             t_run_end = time.perf_counter()
 
@@ -223,6 +248,7 @@ def execute_poc_run(
                         stage_timings_sec=stage_timings,
                         total_elapsed_sec=total_elapsed,
                         usage_by_pass=usage_by_pass,
+                        output_dir=metrics_output_dir,
                         audio_duration_sec=audio_duration,
                     )
                 except Exception as exc:  # pragma: no cover - メトリクス書き込み失敗は致命的でない
@@ -230,7 +256,6 @@ def execute_poc_run(
             # Mark completion
             if options.progress_callback:
                 options.progress_callback("完了", 100)
-            saved_paths.append(output_path)
     return saved_paths
 
 
@@ -253,14 +278,21 @@ def build_single_block(result: TranscriptionResult) -> List[dict]:
     ]
 
 
-def save_result(result: TranscriptionResult, dest: Path, *, blocks: List[dict] | None = None) -> None:
+def save_result(
+    result: TranscriptionResult,
+    dest: Path,
+    *,
+    blocks: List[dict] | None = None,
+    enforce_file_limit: bool = True,
+) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     payload = result.to_dict()
     if blocks is not None:
         payload["blocks"] = blocks
     dest.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
     logger.info("結果を保存しました: %s", dest)
-    _enforce_poc_samples_file_limit(dest.parent, max_files=5)
+    if enforce_file_limit:
+        _enforce_poc_samples_file_limit(dest.parent, max_files=5)
 
 
 def save_progress_snapshot(
@@ -272,6 +304,7 @@ def save_progress_snapshot(
     progress_dir: Path,
     metadata: dict,
     llm_provider: str | None = None,
+    enforce_file_limit: bool = True,
 ) -> None:
     record = create_progress_record(
         run_id=run_id,
@@ -290,7 +323,8 @@ def save_progress_snapshot(
     progress_dir.mkdir(parents=True, exist_ok=True)
     save_progress(record, save_path)
     logger.info("進捗ファイルを保存しました: %s", save_path)
-    _enforce_progress_file_limit(progress_dir, max_files=5)
+    if enforce_file_limit:
+        _enforce_progress_file_limit(progress_dir, max_files=5)
 
 
 class ResumeCompletedError(RuntimeError):
