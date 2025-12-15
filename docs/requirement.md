@@ -153,6 +153,7 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
     - **最小行長/Pass3:** 行は原則5〜17文字。問題がなくても Pass3 で最終確認し、短行は統合する。  
     - **Pass4（長さ違反行のみ再LLM）:** Pass3後に5文字未満/17文字超の行だけを再度LLMにかけ直す。出力が空/不正の場合は元行を維持し、Pass4 の段階で出力された `lines` をそのまま採用する（Pass4 後にローカルでの強制再分割は行わない）。  
     - **末尾カバレッジ保証（プロバイダ差異の吸収）:** 一部プロバイダ（特に OpenAI）では、Pass2/Pass3 の `lines` が先頭側に偏り、末尾の単語に対応する行が生成されないケースがある。この場合は TwoPassFormatter 内のフォールバック（`_ensure_trailing_coverage`）により、未カバーの単語から簡易な行を自動生成し、**常に文字起こし全文がSRTに反映される**ようにする。
+    - **Pass5（オプション）:** SRT生成後の後処理として、指定文字数を超える長行のみLLMで改行する（タイムコードは変更しない）。
 *   **プロンプトの役割（two-pass）:**
     1.  パス1: 置換/削除のみを operations 配列(JSON)で返す。挿入禁止・順序を変えない。
     2.  パス2: 17文字以内の自然な行分割を `{"lines":[{"from":0,"to":10,"text":"..."}]}` 形式で返す。
@@ -171,7 +172,7 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
     *   エラー終了時に具体的な再開手順を表示
     *   例: `python -m src.cli.main run input.wav --resume temp/progress_20250120_103000.json`
 *   **ログ記録:**
-    *   `logs/processing.log` に処理状況を記録
+    *   `logs/processing.log` に処理状況を記録（TODO: 現状は標準出力中心）
     *   LLM生応答は `logs/llm_raw/` に **1 run（音声×モデル）につき1ファイル** として集約保存（Pass1〜Pass4の生JSONをパスごとセクションにまとめる）
     *   LLM使用量・時間と概算コストは `logs/metrics/{音声ファイル名}_{日付}_{run_id}_metrics.json` に保存し、以下をJSONで持つ:
         *   全体の経過時間（人間が読みやすい形式の `total_elapsed_time`。例: `8m 22.35s`）
@@ -179,7 +180,9 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
         *   入力音声の長さ（wordタイムスタンプの先頭〜末尾を元にした `audio_duration_time`）
         *   Pass1〜Pass3 のトークン数・処理時間、および実際に使用した `provider` / `model`
         *   Pass4 のトークン数・処理時間（複数回呼び出し分を合計）、および `provider` / `model`
+        *   Pass5 のトークン数・処理時間（有効時のみ）
         *   プロバイダー/モデルごとの 1M トークン単価（`config/llm_pricing.json`）を用いて算出した概算コスト（Pass単位の `cost_input_usd` / `cost_output_usd` / `cost_total_usd` と、run全体の `run_total_cost_usd`）
+    *   GUIの「ログ保存」をONにした場合は、SRT出力先（`subtitle_dir`）配下の `logs/` にログ一式をまとめて保存する（デバッグ用）
 
 ### Step 3: タイムスタンプ再計算 (Local)
 
@@ -231,6 +234,7 @@ python -m src.cli.main run <音声ファイル> [オプション]
 #### 出力パス
 - 音声×モデル×実行時刻ごとに `temp/poc_samples/{run_id}.json` を保存（内部的に **最大5件まで** を保持し、古いJSONから自動削除してディスク肥大化を防ぐ）。
 - LLM整形を実行した場合のみ `{subtitle_dir}/{run_id}.srt` を自動命名で保存（`subtitle_dir` のデフォルトは `output/`、`--subtitle-dir` で変更可能）。
+- GUIの「ログ保存」をONにした場合は `{subtitle_dir}/logs/` 配下に `poc_samples/`, `progress/`, `metrics/`, `llm_raw/` を保存（ファイル数上限なし）。
 
 #### 実行例
 ```bash
@@ -268,12 +272,16 @@ python -m src.cli.main run samples/sample_audio.m4a --llm anthropic --rewrite
     *   [ ] **詳細モード（上級者向け）**  
         - GUI上の折りたたみセクションで、Pass1〜Pass4 のモデル名を **プルダウン（Combobox）** から個別に選択できる（候補は `config/llm_profiles.json` などプロファイル定義から自動生成）。  
         - CLIの `--llm-profile` と `LLM_PASS*_MODEL` 相当の設定をGUIから調整できるイメージ。
+    *   [ ] **Pass5（長行改行）**  
+        - 指定文字数を超える長行のみを後処理で改行する（タイムコードは変更しない）。  
+        - 文字数（例: 17）と、（必要なら）使用モデルを指定できる。
     *   [ ] **語尾調整・リライトを行う**（デフォルトOFF：原文維持＋フィラー削除のみ）
     *   [ ] **高精度モード**（large-v3モデル使用。OFFの場合はmediumモデルで高速化）
 *   **出力:**
     *   デフォルトでは `output/` ディレクトリに `filename_model_timestamp.srt` を保存（CLIと共通）。
     *   GUI からは「保存先フォルダを選択」ボタンで任意のディレクトリを指定できる。
-    *   完了時に通知を表示し、GUI下部に「総トークン数」「概算APIコスト（USD、小数点第3位まで）」「総処理時間（X分Y秒）」を表示する。
+    *   完了時に通知を表示し、GUI下部に「総トークン数」「概算APIコスト（USD、小数点第3位まで）」「総処理時間（待機含む）」を表示する。
+        *   追加で、待機時間 / 実処理時間 と、パス別処理時間（Pass1〜Pass4、Pass5は有効時のみ）を表示する。
 
 #### 将来のWebアプリ版について（メモ）
 - 本要件定義のMVPでは「ローカル実行できるGUI（Tkinter / Flet想定）」を優先し、ブラウザ上で動くWebアプリ版は**別フェーズ**で検討する。  
