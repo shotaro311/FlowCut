@@ -10,6 +10,7 @@ from typing import Callable, Iterable, List, Sequence, Dict, Any
 from dataclasses import dataclass
 
 from src.config.settings import get_settings
+from src.gui.config import get_config
 from src.llm.profiles import get_profile
 from src.pipeline import PocRunOptions, ensure_audio_files, execute_poc_run, resolve_models
 
@@ -209,6 +210,8 @@ class GuiController:
         p3 = p3 or settings.llm.pass3_model
         p4 = p4 or settings.llm.pass4_model
 
+        glossary_terms = get_config().get_glossary_terms()
+
         return PocRunOptions(
             output_dir=Path("temp/poc_samples"),
             progress_dir=Path("temp/progress"),
@@ -222,6 +225,7 @@ class GuiController:
             llm_pass3_model=p3,
             llm_pass4_model=p4,
             llm_timeout=settings.llm.request_timeout,
+            glossary_terms=glossary_terms,
             start_delay=start_delay,
             enable_pass5=enable_pass5,
             pass5_max_chars=pass5_max_chars,

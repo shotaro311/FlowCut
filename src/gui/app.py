@@ -10,6 +10,7 @@ from src.config import reload_settings
 from src.gui.config import get_config
 from src.gui.controller import GuiController
 from src.gui.workflow_panel import WorkflowPanel
+from src.utils.glossary import format_glossary_text, parse_glossary_text
 
 
 class MainWindow:
@@ -46,13 +47,20 @@ class MainWindow:
             font=("", 14, "bold")
         )
         title_label.pack(side=tk.LEFT)
-        
+
         api_button = ttk.Button(
             header_frame,
             text="API設定",
             command=self._open_api_settings_dialog,
         )
         api_button.pack(side=tk.RIGHT)
+
+        glossary_button = ttk.Button(
+            header_frame,
+            text="辞書",
+            command=self._open_glossary_dialog,
+        )
+        glossary_button.pack(side=tk.RIGHT, padx=(0, 8))
         
         # ワークフローパネル用のスクロール可能なフレーム
         self.workflow_frame = ttk.Frame(main_frame)
@@ -185,6 +193,63 @@ class MainWindow:
         cancel_button.pack(side=tk.RIGHT, padx=(0, 8))
 
         google_entry.focus_set()
+
+    def _open_glossary_dialog(self) -> None:
+        """辞書（Glossary）の編集ダイアログを開く。"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("辞書（Glossary）")
+        dialog.geometry("520x520")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        frame = ttk.Frame(dialog, padding=16)
+        frame.pack(fill=tk.BOTH, expand=True)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(2, weight=1)
+
+        ttk.Label(
+            frame,
+            text="1行に1つずつ用語を入力してください（空行は無視されます）。",
+        ).grid(row=0, column=0, sticky=tk.W, pady=(0, 8))
+
+        # テキストエリア（スクロール付き）
+        text_frame = ttk.Frame(frame)
+        text_frame.grid(row=2, column=0, sticky=tk.NSEW)
+        text_frame.columnconfigure(0, weight=1)
+        text_frame.rowconfigure(0, weight=1)
+
+        glossary_text = tk.Text(text_frame, wrap=tk.WORD)
+        scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=glossary_text.yview)
+        glossary_text.configure(yscrollcommand=scrollbar.set)
+        glossary_text.grid(row=0, column=0, sticky=tk.NSEW)
+        scrollbar.grid(row=0, column=1, sticky=tk.NS)
+
+        # 初期値を反映
+        initial = format_glossary_text(self.config.get_glossary_terms())
+        if initial.strip():
+            glossary_text.insert("1.0", initial + "\n")
+
+        # ボタンフレーム
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=3, column=0, pady=(12, 0), sticky=tk.E)
+
+        def on_save() -> None:
+            raw_text = glossary_text.get("1.0", "end")
+            terms = parse_glossary_text(raw_text)
+            self.config.set_glossary_terms(terms)
+            messagebox.showinfo("情報", "辞書（Glossary）を保存しました。")
+            dialog.destroy()
+
+        def on_cancel() -> None:
+            dialog.destroy()
+
+        save_button = ttk.Button(button_frame, text="保存", command=on_save)
+        save_button.pack(side=tk.RIGHT)
+
+        cancel_button = ttk.Button(button_frame, text="キャンセル", command=on_cancel)
+        cancel_button.pack(side=tk.RIGHT, padx=(0, 8))
+
+        glossary_text.focus_set()
 
 
 def run_gui() -> None:
