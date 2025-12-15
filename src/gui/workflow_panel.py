@@ -269,7 +269,9 @@ class WorkflowPanel(ttk.Frame):
         
         self._set_running_state(True)
         self.phase_var.set("準備中")
+        self.base_phase_var.set("準備中")
         self.output_var.set("")
+        self.metrics_var.set("")
         self.progress["value"] = 0
         self._start_rolling_animation()
         

@@ -71,6 +71,7 @@ class GuiController:
 
         def worker() -> None:
             self._notify(on_start)
+            t_start = time.perf_counter()
             
             # MLX Whisperの並列実行を防ぐためにロックを取得
             # 他のワークフローが実行中の場合は待機
@@ -96,7 +97,6 @@ class GuiController:
                     # タイムスタンプを固定してGUI側からも出力パスを把握できるようにする
                     options.timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
 
-                    t_start = time.perf_counter()
                     audio_files = ensure_audio_files([audio_path])
                     model_slugs = resolve_models(None)
                     result_paths = execute_poc_run(audio_files, model_slugs, options)
