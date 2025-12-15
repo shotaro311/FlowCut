@@ -153,6 +153,7 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
     - **最小行長/Pass3:** 行は原則5〜17文字。問題がなくても Pass3 で最終確認し、短行は統合する。  
     - **Pass4（長さ違反行のみ再LLM）:** Pass3後に5文字未満/17文字超の行だけを再度LLMにかけ直す。出力が空/不正の場合は元行を維持し、Pass4 の段階で出力された `lines` をそのまま採用する（Pass4 後にローカルでの強制再分割は行わない）。  
     - **末尾カバレッジ保証（プロバイダ差異の吸収）:** 一部プロバイダ（特に OpenAI）では、Pass2/Pass3 の `lines` が先頭側に偏り、末尾の単語に対応する行が生成されないケースがある。この場合は TwoPassFormatter 内のフォールバック（`_ensure_trailing_coverage`）により、未カバーの単語から簡易な行を自動生成し、**常に文字起こし全文がSRTに反映される**ようにする。
+    - **Pass5（オプション）:** SRT生成後の後処理として、指定文字数を超える長行のみLLMで改行する（タイムコードは変更しない）。
 *   **プロンプトの役割（two-pass）:**
     1.  パス1: 置換/削除のみを operations 配列(JSON)で返す。挿入禁止・順序を変えない。
     2.  パス2: 17文字以内の自然な行分割を `{"lines":[{"from":0,"to":10,"text":"..."}]}` 形式で返す。
@@ -179,6 +180,7 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
         *   入力音声の長さ（wordタイムスタンプの先頭〜末尾を元にした `audio_duration_time`）
         *   Pass1〜Pass3 のトークン数・処理時間、および実際に使用した `provider` / `model`
         *   Pass4 のトークン数・処理時間（複数回呼び出し分を合計）、および `provider` / `model`
+        *   Pass5 のトークン数・処理時間（有効時のみ）
         *   プロバイダー/モデルごとの 1M トークン単価（`config/llm_pricing.json`）を用いて算出した概算コスト（Pass単位の `cost_input_usd` / `cost_output_usd` / `cost_total_usd` と、run全体の `run_total_cost_usd`）
     *   GUIの「ログ保存」をONにした場合は、SRT出力先（`subtitle_dir`）配下の `logs/` にログ一式をまとめて保存する（デバッグ用）
 
@@ -270,6 +272,9 @@ python -m src.cli.main run samples/sample_audio.m4a --llm anthropic --rewrite
     *   [ ] **詳細モード（上級者向け）**  
         - GUI上の折りたたみセクションで、Pass1〜Pass4 のモデル名を **プルダウン（Combobox）** から個別に選択できる（候補は `config/llm_profiles.json` などプロファイル定義から自動生成）。  
         - CLIの `--llm-profile` と `LLM_PASS*_MODEL` 相当の設定をGUIから調整できるイメージ。
+    *   [ ] **Pass5（長行改行）**  
+        - 指定文字数を超える長行のみを後処理で改行する（タイムコードは変更しない）。  
+        - 文字数（例: 17）と、（必要なら）使用モデルを指定できる。
     *   [ ] **語尾調整・リライトを行う**（デフォルトOFF：原文維持＋フィラー削除のみ）
     *   [ ] **高精度モード**（large-v3モデル使用。OFFの場合はmediumモデルで高速化）
 *   **出力:**
