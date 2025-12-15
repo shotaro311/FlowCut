@@ -275,7 +275,8 @@ python -m src.cli.main run samples/sample_audio.m4a --llm anthropic --rewrite
 *   **出力:**
     *   デフォルトでは `output/` ディレクトリに `filename_model_timestamp.srt` を保存（CLIと共通）。
     *   GUI からは「保存先フォルダを選択」ボタンで任意のディレクトリを指定できる。
-    *   完了時に通知を表示し、GUI下部に「総トークン数」「概算APIコスト（USD、小数点第3位まで）」「総処理時間（X分Y秒）」を表示する。
+    *   完了時に通知を表示し、GUI下部に「総トークン数」「概算APIコスト（USD、小数点第3位まで）」「総処理時間（待機含む）」を表示する。
+        *   追加で、待機時間 / 実処理時間 と、パス別処理時間（Pass1〜Pass4、Pass5は有効時のみ）を表示する。
 
 #### 将来のWebアプリ版について（メモ）
 - 本要件定義のMVPでは「ローカル実行できるGUI（Tkinter / Flet想定）」を優先し、ブラウザ上で動くWebアプリ版は**別フェーズ**で検討する。  
