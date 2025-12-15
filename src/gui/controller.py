@@ -251,12 +251,14 @@ class GuiController:
         - 総トークン数（Pass1〜4・全モデルの合計）
         - 概算APIコスト（USD, run_total_cost_usd の合計）
         - 総処理時間（秒）
+        - ステージ別処理時間
         """
         if not timestamp:
             return {
                 "total_tokens": 0,
                 "total_cost_usd": 0.0,
                 "total_elapsed_sec": total_elapsed_sec,
+                "stage_timings_time": {},
             }
 
         metrics_root = Path("logs/metrics")
@@ -265,10 +267,12 @@ class GuiController:
                 "total_tokens": 0,
                 "total_cost_usd": 0.0,
                 "total_elapsed_sec": total_elapsed_sec,
+                "stage_timings_time": {},
             }
 
         total_tokens = 0
         total_cost = 0.0
+        stage_timings_time: Dict[str, str] = {}
 
         # ファイル名フォーマットは usage_metrics.write_run_metrics_file を参照
         # {audio_file.name}_{date_str}_{run_id}_metrics.json
@@ -289,11 +293,16 @@ class GuiController:
                 cost = data.get("run_total_cost_usd")
                 if isinstance(cost, (int, float)):
                     total_cost += float(cost)
+                # ステージ別処理時間を取得
+                timings = data.get("stage_timings_time") or {}
+                if isinstance(timings, dict):
+                    stage_timings_time.update(timings)
 
         return {
             "total_tokens": total_tokens,
             "total_cost_usd": total_cost,
             "total_elapsed_sec": total_elapsed_sec,
+            "stage_timings_time": stage_timings_time,
         }
 
     def _notify(self, callback: Callable[..., None] | None, *args, **kwargs) -> None:

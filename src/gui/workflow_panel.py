@@ -76,10 +76,7 @@ class WorkflowPanel(ttk.Frame):
         self._all_models = _get_all_models()
         self._pass_model_combos: list[ttk.Combobox] = []
         
-        # フレームのタイトル
-        title_frame = ttk.Frame(self)
-        title_frame.pack(fill=tk.X, pady=(0, 8))
-        ttk.Label(title_frame, text=f"ワークフロー {workflow_id}", font=("", 10, "bold")).pack(side=tk.LEFT)
+
         
         self._build_widgets()
         self._load_initial_settings()
@@ -351,8 +348,21 @@ class WorkflowPanel(ttk.Frame):
             total_tokens = metrics.get("total_tokens") or 0
             total_cost = float(metrics.get("total_cost_usd") or 0.0)
             elapsed_sec = float(metrics.get("total_elapsed_sec") or 0.0)
+            
+            # ステージ別処理時間
+            stage_timings = metrics.get("stage_timings_time") or {}
+            stage_info = ""
+            if stage_timings:
+                parts = []
+                if "transcribe_sec" in stage_timings:
+                    parts.append(f"文字起こし: {stage_timings['transcribe_sec']}")
+                if "llm_two_pass_sec" in stage_timings:
+                    parts.append(f"LLM: {stage_timings['llm_two_pass_sec']}")
+                if parts:
+                    stage_info = f" ({', '.join(parts)})"
+            
             self.metrics_var.set(
-                f"トークン: {total_tokens:,} / コスト: ${total_cost:.4f} / 時間: {self._format_elapsed(elapsed_sec)}"
+                f"トークン: {total_tokens:,} / コスト: ${total_cost:.4f} / 時間: {self._format_elapsed(elapsed_sec)}{stage_info}"
             )
 
     def _on_error(self, exc: Exception) -> None:

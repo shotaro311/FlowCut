@@ -15,7 +15,7 @@ from src.gui.workflow_panel import WorkflowPanel
 class MainWindow:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.title("Flow Cut GUI (Phase 1) - 並列処理対応")
+        self.root.title("Flow Cut")
         self.root.geometry("640x800")  # 2パネル用にサイズを拡張
         
         # 設定マネージャー
@@ -42,18 +42,11 @@ class MainWindow:
         
         title_label = ttk.Label(
             header_frame, 
-            text="Flow Cut - 並列処理対応GUI", 
+            text="Flow Cut", 
             font=("", 14, "bold")
         )
         title_label.pack(side=tk.LEFT)
         
-        info_label = ttk.Label(
-            header_frame, 
-            text="最大2つのワークフローを同時実行できます",
-            foreground="#666666"
-        )
-        info_label.pack(side=tk.LEFT, padx=(16, 0))
-
         api_button = ttk.Button(
             header_frame,
             text="API設定",
@@ -92,15 +85,11 @@ class MainWindow:
 
     def _setup_workflows(self) -> None:
         """ワークフローパネルをセットアップする。"""
-        # ワークフロー1
-        panel1 = WorkflowPanel(self.workflow_frame, "1", self.controller, self.root)
-        panel1.pack(fill=tk.X, pady=(0, 8))
-        self.workflow_panels["1"] = panel1
-        
-        # ワークフロー2
-        panel2 = WorkflowPanel(self.workflow_frame, "2", self.controller, self.root)
-        panel2.pack(fill=tk.X, pady=(0, 8))
-        self.workflow_panels["2"] = panel2
+        # ワークフローパネル
+        self.workflow_panels = {}
+        panel = WorkflowPanel(self.workflow_frame, "1", self.controller, self.root)
+        panel.pack(fill=tk.X, pady=(0, 8))
+        self.workflow_panels["1"] = panel
     
     def _dispatch_to_ui(self, func) -> None:
         """UIスレッドで関数を実行する。"""

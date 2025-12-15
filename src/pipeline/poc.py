@@ -146,7 +146,19 @@ def execute_poc_run(
                 if not result.words:
                     logger.warning("wordタイムスタンプが空のためSRT生成をスキップします: %s", run_id)
                 else:
-                    two_pass = TwoPassFormatter(
+
+                    # Workflow2の場合は最適化版の実装を使用する
+                    if options.workflow == "workflow2":
+                        try:
+                            from src.llm.two_pass_optimized import TwoPassFormatter as FormatterCls
+                            logger.info("Using Optimized TwoPassFormatter (workflow2)")
+                        except ImportError:
+                            logger.warning("src.llm.two_pass_optimized not found; falling back to standard TwoPassFormatter")
+                            from src.llm.two_pass import TwoPassFormatter as FormatterCls
+                    else:
+                        from src.llm.two_pass import TwoPassFormatter as FormatterCls
+
+                    two_pass = FormatterCls(
                         llm_provider=options.llm_provider,
                         temperature=options.llm_temperature,
                         timeout=options.llm_timeout,
@@ -206,6 +218,12 @@ def execute_poc_run(
                     subtitle_path.write_text(subtitle_text, encoding="utf-8")
                     logger.info("SRTを保存しました: %s", subtitle_path)
 
+            # 処理時間を計算（save_progress_snapshot呼び出し前に計算）
+            t_run_end_for_progress = time.perf_counter()
+            transcribe_sec = t_transcribe_end - t_transcribe_start
+            llm_two_pass_sec = (t_llm_end - t_llm_start) if options.llm_provider and result.words else 0.0
+            total_elapsed_sec = t_run_end_for_progress - t_run_start
+            
             save_progress_snapshot(
                 run_id=run_id,
                 audio_path=audio_path,
@@ -217,6 +235,11 @@ def execute_poc_run(
                     result.metadata,
                     timestamp,
                     subtitle_path=subtitle_path,
+                    total_elapsed_sec=total_elapsed_sec,
+                    stage_timings_sec={
+                        "transcribe_sec": transcribe_sec,
+                        "llm_two_pass_sec": llm_two_pass_sec,
+                    },
                 ),
                 llm_provider=options.llm_provider,
             )
@@ -431,12 +454,29 @@ def _extract_timestamp(record: ProgressRecord) -> str | None:
     return None
 
 
+def _format_seconds(secs: float) -> str:
+    """人が読みやすい `Xm Y.YYs` 形式に変換する."""
+    try:
+        value = float(secs)
+    except (TypeError, ValueError):
+        return "0.00s"
+    if value < 0:
+        value = 0.0
+    minutes = int(value // 60)
+    seconds = value - minutes * 60
+    if minutes > 0:
+        return f"{minutes}m {seconds:.2f}s"
+    return f"{seconds:.2f}s"
+
+
 def _build_progress_metadata(
     options: PocRunOptions,
     base_metadata: Dict[str, Any],
     timestamp: str,
     *,
     subtitle_path: Path | None = None,
+    total_elapsed_sec: float | None = None,
+    stage_timings_sec: Dict[str, float] | None = None,
 ) -> Dict[str, Any]:
     metadata: Dict[str, Any] = dict(base_metadata or {})
     metadata.setdefault("requested_at", timestamp)
@@ -460,6 +500,13 @@ def _build_progress_metadata(
         metadata["resume_source"] = str(options.resume_source)
     if subtitle_path:
         metadata["subtitle_path"] = str(subtitle_path)
+    # 処理時間情報を追加
+    if total_elapsed_sec is not None:
+        metadata["total_elapsed_sec"] = round(total_elapsed_sec, 2)
+        metadata["total_elapsed_time"] = _format_seconds(total_elapsed_sec)
+    if stage_timings_sec:
+        metadata["stage_timings_sec"] = {k: round(v, 2) for k, v in stage_timings_sec.items()}
+        metadata["stage_timings_time"] = {k: _format_seconds(v) for k, v in stage_timings_sec.items()}
     return metadata
 
 
