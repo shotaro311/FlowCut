@@ -246,6 +246,7 @@ class TwoPassFormatter:
         *,
         run_id: str | None = None,
         source_name: str | None = None,
+        raw_log_dir: Path | None = None,
         fill_gaps: bool = True,
         max_gap_duration: float | None = None,
         gap_padding: float = 0.15,
@@ -281,6 +282,7 @@ class TwoPassFormatter:
         # ログ用コンテキスト（処理単位で1ファイルにまとめる）
         self.run_id = run_id
         self.source_name = source_name
+        self.raw_log_dir = raw_log_dir or RAW_LOG_DIR
         self._log_buffer: Dict[str, str] = {}
         self._log_date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
         self._log_written = False
@@ -307,11 +309,11 @@ class TwoPassFormatter:
         if self._log_written or not self._log_buffer:
             return
         try:
-            RAW_LOG_DIR.mkdir(parents=True, exist_ok=True)
+            self.raw_log_dir.mkdir(parents=True, exist_ok=True)
             base_name = (self.source_name or self.run_id or "llm_run").replace("/", "_")
             # yyyymmdd_連番 の連番部分は run_id があればそれを使い、無ければ uuid 短縮
             suffix = self.run_id or uuid.uuid4().hex[:8]
-            fname = RAW_LOG_DIR / f"{base_name}_{self._log_date_str}_{suffix}.txt"
+            fname = self.raw_log_dir / f"{base_name}_{self._log_date_str}_{suffix}.txt"
             # パス順で安定した並びにして書き出す
             ordered = []
             for label in sorted(self._log_buffer.keys()):

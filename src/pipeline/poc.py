@@ -7,6 +7,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple, Callable
+import sys
 import time
 
 from src.llm.two_pass import TwoPassFormatter, TwoPassResult
@@ -60,12 +61,12 @@ class PocRunOptions:
     llm_timeout: float | None = None
     glossary_terms: list[str] | None = None
     start_delay: float = 0.0
+    keep_extracted_audio: bool = False
     enable_pass5: bool = False
     pass5_max_chars: int = 17
     pass5_model: str | None = None
-    pass5_provider: str | None = None
-    keep_extracted_audio: bool = False  # 動画から抽出した音声を保存するか
     progress_callback: Callable[[str, int], None] | None = None
+    save_logs: bool = False
 
     def normalized_timestamp(self) -> str:
         # ファイル名の衝突を避けるため、秒まで含めたタイムスタンプを使用（例: 20251124T125830）
@@ -73,11 +74,16 @@ class PocRunOptions:
 
 
 def resolve_models(raw: str | None) -> List[str]:
-    """Return sorted list of runner slugs (all if raw is None)."""
+    """ランナー一覧文字列から使用するランナー slug のリストを返す。
+
+    - raw が None/空文字の場合は「プラットフォーム別のデフォルト」を選ぶ
+      - macOS (darwin): MLX ランナー（'mlx'）
+      - それ以外（Windows / Linux 等）: OpenAI Whisper ランナー（'openai'）
+    """
     if not raw:
-        # デフォルトはクラウドWhisperを避け、ローカルMLX large-v3のみを使用
         runners = available_runners()
-        return [slug for slug in runners if slug == "mlx"] or runners
+        default_slug = "mlx" if sys.platform == "darwin" else "openai"
+        return [slug for slug in runners if slug == default_slug] or runners
     requested = [token.strip() for token in raw.split(",") if token.strip()]
     unknown = [slug for slug in requested if slug not in available_runners()]
     if unknown:
@@ -113,6 +119,21 @@ def execute_poc_run(
 
     timestamp = options.normalized_timestamp()
     saved_paths: List[Path] = []
+    logs_root: Path | None = None
+    json_output_dir = options.output_dir
+    progress_dir = options.progress_dir
+    metrics_output_dir: Path | None = None
+    raw_llm_log_dir: Path | None = None
+    enforce_file_limits = True
+
+    if options.save_logs:
+        # 出力先（subtitle_dir）直下へ logs/ を作り、必要な成果物をまとめる
+        logs_root = options.subtitle_dir / "logs"
+        json_output_dir = logs_root / "poc_samples"
+        progress_dir = logs_root / "progress"
+        metrics_output_dir = logs_root / "metrics"
+        raw_llm_log_dir = logs_root / "llm_raw"
+        enforce_file_limits = False
 
     for slug in models:
         runner = get_runner(slug)
@@ -159,8 +180,14 @@ def execute_poc_run(
             blocks = build_single_block(result)
             # run_idは元のファイル名（動画の場合は動画名）をベースにする
             run_id = f"{original_stem}_{slug}_{timestamp}"
-            output_path = options.output_dir / f"{run_id}.json"
-            save_result(result, output_path, blocks=blocks)
+            output_path = json_output_dir / f"{run_id}.json"
+            save_result(
+                result,
+                output_path,
+                blocks=blocks,
+                enforce_file_limit=enforce_file_limits,
+            )
+            saved_paths.append(output_path)
 
             subtitle_path: Path | None = None
             if options.llm_provider:
@@ -198,6 +225,7 @@ def execute_poc_run(
                         run_id=run_id,
                         source_name=audio_path.name,
                         start_delay=options.start_delay,
+                        raw_log_dir=raw_llm_log_dir,
                     )
                     # Phase 2-5: LLM passes
                     t_llm_start = time.perf_counter()
@@ -221,23 +249,22 @@ def execute_poc_run(
                         audio_path.name,
                         t_llm_end - t_llm_start,
                     )
-
-                    # Pass5: Claude長行改行処理（オプション）
                     if options.enable_pass5 and subtitle_text:
                         try:
                             from src.llm.pass5_processor import Pass5Processor
+
                             if options.progress_callback:
                                 options.progress_callback("LLM Pass 5", 98)
-                            processor = Pass5Processor(
+                            model_override = options.pass5_model or options.llm_pass4_model or options.llm_pass3_model
+                            subtitle_text = Pass5Processor(
+                                provider=options.llm_provider,
                                 max_chars=options.pass5_max_chars,
+                                model_override=model_override,
                                 run_id=run_id,
                                 source_name=audio_path.name,
-                                model=options.pass5_model,
-                                provider=options.pass5_provider,
                                 temperature=options.llm_temperature,
                                 timeout=options.llm_timeout,
-                            )
-                            subtitle_text = processor.process(subtitle_text)
+                            ).process(subtitle_text)
                         except Exception as exc:
                             logger.warning("Pass5処理に失敗しました: %s", exc)
 
@@ -245,6 +272,7 @@ def execute_poc_run(
                     subtitle_path.parent.mkdir(parents=True, exist_ok=True)
                     subtitle_path.write_text(subtitle_text, encoding="utf-8")
                     logger.info("SRTを保存しました: %s", subtitle_path)
+                    saved_paths.append(subtitle_path)
 
             # 処理時間を計算（save_progress_snapshot呼び出し前に計算）
             t_run_end_for_progress = time.perf_counter()
@@ -257,7 +285,7 @@ def execute_poc_run(
                 audio_path=audio_path,
                 runner_slug=slug,
                 blocks=blocks,
-                progress_dir=options.progress_dir,
+                progress_dir=progress_dir,
                 metadata=_build_progress_metadata(
                     options,
                     result.metadata,
@@ -270,6 +298,7 @@ def execute_poc_run(
                     },
                 ),
                 llm_provider=options.llm_provider,
+                enforce_file_limit=enforce_file_limits,
             )
             t_run_end = time.perf_counter()
 
@@ -298,6 +327,7 @@ def execute_poc_run(
                         stage_timings_sec=stage_timings,
                         total_elapsed_sec=total_elapsed,
                         usage_by_pass=usage_by_pass,
+                        output_dir=metrics_output_dir,
                         audio_duration_sec=audio_duration,
                     )
                 except Exception as exc:  # pragma: no cover - メトリクス書き込み失敗は致命的でない
@@ -305,9 +335,7 @@ def execute_poc_run(
             # Mark completion
             if options.progress_callback:
                 options.progress_callback("完了", 100)
-            saved_paths.append(output_path)
-            
-            # 動画から抽出した音声ファイルのクリーンアップ
+
             if extracted_audio_path and not options.keep_extracted_audio:
                 cleanup_extracted_audio(extracted_audio_path)
     return saved_paths
@@ -332,14 +360,21 @@ def build_single_block(result: TranscriptionResult) -> List[dict]:
     ]
 
 
-def save_result(result: TranscriptionResult, dest: Path, *, blocks: List[dict] | None = None) -> None:
+def save_result(
+    result: TranscriptionResult,
+    dest: Path,
+    *,
+    blocks: List[dict] | None = None,
+    enforce_file_limit: bool = True,
+) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     payload = result.to_dict()
     if blocks is not None:
         payload["blocks"] = blocks
     dest.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
     logger.info("結果を保存しました: %s", dest)
-    _enforce_poc_samples_file_limit(dest.parent, max_files=5)
+    if enforce_file_limit:
+        _enforce_poc_samples_file_limit(dest.parent, max_files=5)
 
 
 def save_progress_snapshot(
@@ -351,6 +386,7 @@ def save_progress_snapshot(
     progress_dir: Path,
     metadata: dict,
     llm_provider: str | None = None,
+    enforce_file_limit: bool = True,
 ) -> None:
     record = create_progress_record(
         run_id=run_id,
@@ -369,7 +405,8 @@ def save_progress_snapshot(
     progress_dir.mkdir(parents=True, exist_ok=True)
     save_progress(record, save_path)
     logger.info("進捗ファイルを保存しました: %s", save_path)
-    _enforce_progress_file_limit(progress_dir, max_files=5)
+    if enforce_file_limit:
+        _enforce_progress_file_limit(progress_dir, max_files=5)
 
 
 class ResumeCompletedError(RuntimeError):
@@ -387,6 +424,11 @@ def prepare_resume_run(
     audio_files = ensure_audio_files([Path(record.audio_file)])
     timestamp = _extract_timestamp(record)
     option_meta = (record.metadata or {}).get("options", {})
+    raw_start_delay = option_meta.get("start_delay", base_options.start_delay)
+    try:
+        start_delay = float(raw_start_delay)
+    except (TypeError, ValueError):
+        start_delay = float(base_options.start_delay)
     resume_options = PocRunOptions(
         language=base_options.language or option_meta.get("language"),
         chunk_size=(
@@ -420,6 +462,13 @@ def prepare_resume_run(
         llm_timeout=(
             base_options.llm_timeout if base_options.llm_timeout is not None else option_meta.get("llm_timeout")
         ),
+        glossary_terms=option_meta.get("glossary_terms"),
+        start_delay=start_delay,
+        keep_extracted_audio=bool(option_meta.get("keep_extracted_audio", base_options.keep_extracted_audio)),
+        save_logs=bool(option_meta.get("save_logs", base_options.save_logs)),
+        enable_pass5=option_meta.get("enable_pass5", base_options.enable_pass5),
+        pass5_max_chars=option_meta.get("pass5_max_chars", base_options.pass5_max_chars),
+        pass5_model=option_meta.get("pass5_model"),
     )
     return record, audio_files, [record.model], resume_options
 
@@ -526,7 +575,13 @@ def _build_progress_metadata(
         "rewrite": options.rewrite,
         "llm_temperature": options.llm_temperature,
         "llm_timeout": options.llm_timeout,
+        "glossary_terms": options.glossary_terms,
         "start_delay": options.start_delay,
+        "keep_extracted_audio": options.keep_extracted_audio,
+        "save_logs": options.save_logs,
+        "enable_pass5": options.enable_pass5,
+        "pass5_max_chars": options.pass5_max_chars,
+        "pass5_model": options.pass5_model,
     }
     if options.resume_source:
         metadata["resume_source"] = str(options.resume_source)

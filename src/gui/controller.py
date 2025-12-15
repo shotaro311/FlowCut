@@ -55,11 +55,10 @@ class GuiController:
         pass3_model: str | None = None,
         pass4_model: str | None = None,
         start_delay: float = 0.0,
+        keep_extracted_audio: bool = False,
         enable_pass5: bool = False,
         pass5_max_chars: int = 17,
         pass5_model: str | None = None,
-        pass5_provider: str | None = None,
-        keep_extracted_audio: bool = False,
         save_logs: bool = False,
         on_start: Callable[[], None] | None = None,
         on_success: Callable[[List[Path], dict | None], None] | None = None,
@@ -79,11 +78,13 @@ class GuiController:
 
         def worker() -> None:
             self._notify(on_start)
+            t_start = time.perf_counter()
             
             # MLX Whisperの並列実行を防ぐためにロックを取得
             # 他のワークフローが実行中の場合は待機
             self._notify(on_progress, "待機中（他の処理完了待ち）", 0)
             with self._execution_lock:
+                t_processing_start = time.perf_counter()
                 try:
                     # プログレスコールバックをワークフローID付きでラップ
                     safe_progress_callback = None
@@ -100,41 +101,39 @@ class GuiController:
                         pass3_model=pass3_model,
                         pass4_model=pass4_model,
                         start_delay=start_delay,
+                        keep_extracted_audio=keep_extracted_audio,
                         enable_pass5=enable_pass5,
                         pass5_max_chars=pass5_max_chars,
                         pass5_model=pass5_model,
-                        pass5_provider=pass5_provider,
-                        keep_extracted_audio=keep_extracted_audio,
+                        save_logs=save_logs,
                         progress_callback=safe_progress_callback,
                     )
                     # タイムスタンプを固定してGUI側からも出力パスを把握できるようにする
                     options.timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
 
-                    t_start = time.perf_counter()
                     audio_files = ensure_audio_files([audio_path])
                     model_slugs = resolve_models(None)
                     result_paths = execute_poc_run(audio_files, model_slugs, options)
                     t_end = time.perf_counter()
-                    elapsed_sec = max(0.0, t_end - t_start)
+                    total_elapsed_sec = max(0.0, t_end - t_start)
+                    wait_elapsed_sec = max(0.0, t_processing_start - t_start)
+                    processing_elapsed_sec = max(0.0, t_end - t_processing_start)
 
                     # メトリクス集計
                     metrics = self._collect_metrics_summary(
                         audio_path=audio_path,
                         model_slugs=model_slugs,
                         timestamp=options.timestamp,
-                        total_elapsed_sec=elapsed_sec,
+                        total_elapsed_sec=total_elapsed_sec,
+                        metrics_root=self._resolve_metrics_root(options),
                     )
-
-                    # ログを収集して保存（save_logs=Trueの場合のみ）
-                    if save_logs:
-                        log_dir = self._collect_and_save_logs(
-                            audio_path=audio_path,
-                            model_slugs=model_slugs,
-                            timestamp=options.timestamp,
-                            subtitle_dir=subtitle_dir,
-                        )
-                        if log_dir and metrics:
-                            metrics["log_dir"] = str(log_dir)
+                    if metrics is None:
+                        metrics = {}
+                    metrics["wait_elapsed_sec"] = wait_elapsed_sec
+                    metrics["processing_elapsed_sec"] = processing_elapsed_sec
+                    metrics["pass5_enabled"] = bool(options.enable_pass5)
+                    metrics["pass5_max_chars"] = int(options.pass5_max_chars)
+                    metrics["pass5_model"] = options.pass5_model
 
                     self._notify(on_success, result_paths, metrics)
                 except Exception as exc:
@@ -169,11 +168,11 @@ class GuiController:
         pass3_model: str | None = None,
         pass4_model: str | None = None,
         start_delay: float = 0.0,
+        keep_extracted_audio: bool = False,
         enable_pass5: bool = False,
         pass5_max_chars: int = 17,
         pass5_model: str | None = None,
-        pass5_provider: str | None = None,
-        keep_extracted_audio: bool = False,
+        save_logs: bool = False,
         progress_callback: Callable[[str, int], None] | None = None,
     ) -> PocRunOptions:
         """GUIから渡された設定と環境値を組み合わせてPocRunOptionsを構築する。
@@ -226,14 +225,20 @@ class GuiController:
             llm_pass4_model=p4,
             llm_timeout=settings.llm.request_timeout,
             glossary_terms=glossary_terms,
-            start_delay=start_delay,
-            enable_pass5=enable_pass5,
-            pass5_max_chars=pass5_max_chars,
+            start_delay=float(start_delay),
+            keep_extracted_audio=bool(keep_extracted_audio),
+            enable_pass5=bool(enable_pass5),
+            pass5_max_chars=int(pass5_max_chars),
             pass5_model=pass5_model,
-            pass5_provider=pass5_provider,
-            keep_extracted_audio=keep_extracted_audio,
             progress_callback=progress_callback,
+            save_logs=save_logs,
         )
+
+    def _resolve_metrics_root(self, options: PocRunOptions) -> Path:
+        """メトリクス（logs/metrics）の探索先を決定する。"""
+        if options.save_logs:
+            return options.subtitle_dir / "logs" / "metrics"
+        return Path("logs/metrics")
 
     def _collect_output_paths(
         self,
@@ -259,64 +264,101 @@ class GuiController:
         model_slugs: Sequence[str],
         timestamp: str | None,
         total_elapsed_sec: float,
+        *,
+        metrics_root: Path | None = None,
     ) -> dict | None:
         """logs/metrics 配下のメトリクスを集計し、GUI向けの簡易サマリを返す。
 
         - 総トークン数（Pass1〜4・全モデルの合計）
         - 概算APIコスト（USD, run_total_cost_usd の合計）
         - 総処理時間（秒）
-        - ステージ別処理時間
         """
         if not timestamp:
             return {
                 "total_tokens": 0,
                 "total_cost_usd": 0.0,
                 "total_elapsed_sec": total_elapsed_sec,
-                "stage_timings_time": {},
+                "metrics_files_found": 0,
+                "per_runner": {},
             }
 
-        metrics_root = Path("logs/metrics")
-        if not metrics_root.exists():
+        root = metrics_root or Path("logs/metrics")
+        if not root.exists():
             return {
                 "total_tokens": 0,
                 "total_cost_usd": 0.0,
                 "total_elapsed_sec": total_elapsed_sec,
-                "stage_timings_time": {},
+                "metrics_files_found": 0,
+                "per_runner": {},
             }
 
         total_tokens = 0
         total_cost = 0.0
-        stage_timings_time: Dict[str, str] = {}
+        metrics_files_found = 0
+        per_runner: dict = {}
 
         # ファイル名フォーマットは usage_metrics.write_run_metrics_file を参照
         # {audio_file.name}_{date_str}_{run_id}_metrics.json
         for slug in model_slugs:
             run_id = f"{audio_path.stem}_{slug}_{timestamp}"
             pattern = f"{audio_path.name}_*_{run_id}_metrics.json"
-            for path in metrics_root.glob(pattern):
+            matched = sorted(root.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+            for path in matched[:1]:
                 try:
                     data = json.loads(path.read_text(encoding="utf-8"))
                 except Exception:
                     continue
+                metrics_files_found += 1
+                stage_timings_time = data.get("stage_timings_time") or {}
                 llm_tokens = data.get("llm_tokens") or {}
+                pass_durations: dict = {}
                 if isinstance(llm_tokens, dict):
                     for entry in llm_tokens.values():
                         if not isinstance(entry, dict):
                             continue
-                        total_tokens += int(entry.get("total_tokens") or 0)
+                        # total_tokens が欠ける/0 の場合は prompt+completion で代替する
+                        raw_total = entry.get("total_tokens")
+                        if isinstance(raw_total, (int, float)) and int(raw_total) > 0:
+                            total_tokens += int(raw_total)
+                        else:
+                            total_tokens += int(entry.get("prompt_tokens") or 0) + int(entry.get("completion_tokens") or 0)
+
+                    # duration_time を pass_label ごとに収集
+                    for label, entry in llm_tokens.items():
+                        if not isinstance(entry, dict):
+                            continue
+                        duration = entry.get("duration_time")
+                        if isinstance(duration, str) and duration.strip():
+                            pass_durations[str(label)] = duration.strip()
                 cost = data.get("run_total_cost_usd")
-                if isinstance(cost, (int, float)):
+                if isinstance(cost, (int, float)) and float(cost) > 0:
                     total_cost += float(cost)
-                # ステージ別処理時間を取得
-                timings = data.get("stage_timings_time") or {}
-                if isinstance(timings, dict):
-                    stage_timings_time.update(timings)
+                else:
+                    # run_total_cost_usd が無い/0 の場合は、パス別コストの合計で代替する
+                    if isinstance(llm_tokens, dict):
+                        for entry in llm_tokens.values():
+                            if not isinstance(entry, dict):
+                                continue
+                            entry_cost = entry.get("cost_total_usd")
+                            if isinstance(entry_cost, (int, float)):
+                                total_cost += float(entry_cost)
+
+                # GUI表示用の内訳（runnerごと）
+                transcribe_time = stage_timings_time.get("transcribe_sec") if isinstance(stage_timings_time, dict) else None
+                llm_two_pass_time = stage_timings_time.get("llm_two_pass_sec") if isinstance(stage_timings_time, dict) else None
+                per_runner[slug] = {
+                    "metrics_file": str(path),
+                    "transcribe_time": transcribe_time,
+                    "llm_two_pass_time": llm_two_pass_time,
+                    "pass_durations": pass_durations,
+                }
 
         return {
             "total_tokens": total_tokens,
             "total_cost_usd": total_cost,
             "total_elapsed_sec": total_elapsed_sec,
-            "stage_timings_time": stage_timings_time,
+            "metrics_files_found": metrics_files_found,
+            "per_runner": per_runner,
         }
 
     def _notify(self, callback: Callable[..., None] | None, *args, **kwargs) -> None:
@@ -337,71 +379,10 @@ class GuiController:
         with self._lock:
             return [wf_id for wf_id, info in self.workflows.items() if info.is_running]
     
-    def stop_workflow(self, workflow_id: str) -> None:
+    def stop_workflow(self, workflow_id: str) -> bool:
         """指定されたワークフローを停止する（実装は将来対応）。"""
-        # TODO: 実装は難しいので一旦スキップ
-        pass
-
-    def _collect_and_save_logs(
-        self,
-        *,
-        audio_path: Path,
-        model_slugs: Sequence[str],
-        timestamp: str,
-        subtitle_dir: Path,
-    ) -> Path | None:
-        """ログファイルを収集し、出力ディレクトリ内のログフォルダに保存する。
-
-        Args:
-            audio_path: 音声ファイルパス
-            model_slugs: モデルスラッグのリスト
-            timestamp: タイムスタンプ
-            subtitle_dir: SRT出力先ディレクトリ
-
-        Returns:
-            ログフォルダのパス（作成された場合）、失敗時は None
-        """
-        import shutil
-
-        # ログソースディレクトリ
-        project_root = Path.cwd()
-        llm_raw_dir = project_root / "logs" / "llm_raw"
-        poc_samples_dir = project_root / "temp" / "poc_samples"
-        progress_dir = project_root / "temp" / "progress"
-
-        # 出力先ログフォルダ名を構築
-        audio_basename = audio_path.stem
-        model_slug = model_slugs[0] if model_slugs else "mlx"
-        log_folder_name = f"{audio_basename}_{model_slug}_{timestamp}_logs"
-        log_output_dir = subtitle_dir / log_folder_name
-
-        try:
-            log_output_dir.mkdir(parents=True, exist_ok=True)
-
-            # 各ログディレクトリをコピー
-            if llm_raw_dir.exists():
-                dest_llm_raw = log_output_dir / "llm_raw"
-                if dest_llm_raw.exists():
-                    shutil.rmtree(dest_llm_raw)
-                shutil.copytree(llm_raw_dir, dest_llm_raw)
-
-            if poc_samples_dir.exists():
-                dest_poc_samples = log_output_dir / "poc_samples"
-                if dest_poc_samples.exists():
-                    shutil.rmtree(dest_poc_samples)
-                shutil.copytree(poc_samples_dir, dest_poc_samples)
-
-            if progress_dir.exists():
-                dest_progress = log_output_dir / "progress"
-                if dest_progress.exists():
-                    shutil.rmtree(dest_progress)
-                shutil.copytree(progress_dir, dest_progress)
-
-            return log_output_dir
-        except Exception as e:
-            # ログコピー失敗は致命的エラーではないのでログを出して継続
-            print(f"Warning: Failed to copy logs: {e}")
-            return None
+        # TODO: スレッドの停止を実装する必要がある
+        return False
 
 
 __all__ = ["GuiController"]

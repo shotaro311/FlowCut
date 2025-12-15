@@ -16,8 +16,9 @@ from src.utils.glossary import format_glossary_text, parse_glossary_text
 class MainWindow:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.title("Flow Cut")
-        self.root.geometry("640x800")  # 2パネル用にサイズを拡張
+        # アプリタイトルはシンプルに「FlowCut」とする
+        self.root.title("FlowCut")
+        self.root.geometry("640x800")  # ウィンドウサイズ
         
         # 設定マネージャー
         self.config = get_config()
@@ -43,7 +44,7 @@ class MainWindow:
         
         title_label = ttk.Label(
             header_frame, 
-            text="Flow Cut", 
+            text="FlowCut", 
             font=("", 14, "bold")
         )
         title_label.pack(side=tk.LEFT)

@@ -64,6 +64,8 @@ ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxx
 ANTHROPIC_MODEL=claude-sonnet-4-20250514
 ```
 
+※ 基本運用では **`GOOGLE_API_KEY` があれば十分** で、OpenAI の LLM / Whisper API を使う場合にのみ `OPENAI_API_KEY` が必要（それ以外のケースでは未設定でもよい）。  
+
 ### 言語・環境
 *   **Python 3.10-3.12**（3.13は非対応）
 *   **開発環境:** Python仮想環境（venv）
@@ -78,10 +80,41 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
     *   文字起こしのデフォルトは **MLX Whisper Large-v3**。  
     *   開発時は `pip install mlx-whisper` で依存を導入し、配布時の `.app` にはこのランタイムを同梱する想定。  
     *   友人側のMacでは、`.app` を展開して開くだけで MLX Whisper が利用できる（別途 `pip install` は不要）。
-*   **Windows（将来対応を想定：ローカル実行）**
-    *   文字起こしの基盤は **OpenAI Whisper Large-v3 のローカル実行版** を前提とする。  
-    *   開発・実行環境では `openai-whisper` など公式Whisper実装を事前インストール、もしくは `.exe` パッケージに同梱する方針。  
-    *   Windows向けの配布形態（`.exe` やインストーラ）は別PLANで詳細設計する（現時点ではTODO）。
+*   **Windows（友人に配布する `.exe` の想定環境）**
+    *   文字起こしの基盤は **OpenAI Whisper Large-v3 のローカル実行版**（`openai-whisper`）を前提とする。  
+    *   開発時は Windows 上で `pip install openai-whisper` などを行い、配布時の `.exe` には Python ランタイム・依存ライブラリを PyInstaller で同梱する方針。  
+    *   友人側のWindowsでは、配布されたフォルダ（例: `FlowCut-win/`）内の `FlowCut.exe` をダブルクリックするだけで GUI が起動し、Python や ffmpeg の事前インストールは不要とする。  
+    *   具体的なパッケージング手順・構成は `docs/plan/20251203_PLAN1.md`（Windows版 FlowCut GUI パッケージ化PLAN）に従う。
+
+### パッケージングと再ビルド運用（macOS / Windows 共通方針）
+
+*   アプリの機能や画面を更新した場合、**ソースコードの変更 → テスト → 各OS向けパッケージの再生成** という流れで配布物を更新する。  
+*   OSごとに PyInstaller のレシピ（`.spec` ファイル）を分けて管理し、同じコミットから macOS 用 / Windows 用をそれぞれビルドする。
+
+#### macOS 向け `.app` 再パッケージ（概要）
+
+1. macOS 開発環境で `main` ブランチを最新化し、テスト・簡単な動作確認を行う。  
+2. 必要な依存（`mlx-whisper` / ffmpeg など）がインストールされていることを確認する。  
+3. PyInstaller のレシピ（例: `FlowCut.spec`）を使って `.app` を再ビルドする。  
+   * 典型例: `pyinstaller FlowCut.spec` を実行し、`dist/FlowCut.app` を得る。  
+4. 出来上がった `FlowCut.app` を zip などに固めて、友人に配布する。
+
+#### Windows 向け `.exe` 再パッケージ（概要）
+
+1. Windows 開発環境でリポジトリを同じコミット（通常は `main` の最新）に合わせ、**公式 Python 3.10 x64 + venv** で仮想環境と依存インストールを行う。  
+   - 例: `python -m venv .venv` → `.venv\Scripts\activate` → `pip install -r requirements-dev.txt` → `pip install openai-whisper`。  
+   - Anaconda 環境の上にさらに venv を重ねると PyInstaller + torch 周りで DLL エラーが出やすいため、FlowCut 用には「公式 Python + venv」構成を推奨。  
+2. CLI と GUI が Windows 上で問題なく動作することを確認する。  
+3. Windows 用 PyInstaller レシピ（例: `FlowCut_win.spec`）を使って one-folder 形式の出力を作成する。  
+   * 典型例: `pyinstaller FlowCut_win.spec` を実行し、`dist/FlowCut/FlowCut.exe` を得る。  
+4. ビルド後、openai-whisper が参照する `assets` データを exe 側にコピーする（暫定手順）。  
+   ```powershell
+   New-Item -ItemType Directory -Force -Path "dist\FlowCut\_internal\whisper\assets"
+   Copy-Item ".venv\Lib\site-packages\whisper\assets\*" "dist\FlowCut\_internal\whisper\assets\" -Recurse -Force
+   ```
+5. `dist/FlowCut/` フォルダ全体を zip にまとめて `FlowCut-win.zip` とし、友人には「解凍 → `FlowCut.exe` ダブルクリック」で使ってもらう。  
+
+※ 各OSの具体的なコマンドやビルドオプションは、開発者向けランブック（`docs/runbook.md`）および関連PLAN（特に Windows 版: `docs/plan/20251203_PLAN1.md`）に詳細を記載する。
 
 ### 依存関係管理
 *   **フェーズ1（推奨）:** `pip + venv + requirements.txt`
@@ -126,6 +159,7 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
         - workflow2: 誤字脱字修正・辞書（Glossary）に基づく固有名詞統一・政治関連用語の表記統一を行う（原則として行範囲は変更しない）。  
     - **Pass4（長さ違反行のみ再LLM）:** Pass3後に5文字未満/17文字超の行だけを再度LLMにかけ直す。出力が空/不正の場合は元行を維持し、Pass4 の段階で出力された `lines` をそのまま採用する（Pass4 後にローカルでの強制再分割は行わない）。  
     - **末尾カバレッジ保証（プロバイダ差異の吸収）:** 一部プロバイダ（特に OpenAI）では、Pass2/Pass3 の `lines` が先頭側に偏り、末尾の単語に対応する行が生成されないケースがある。この場合は TwoPassFormatter 内のフォールバック（`_ensure_trailing_coverage`）により、未カバーの単語から簡易な行を自動生成し、**常に文字起こし全文がSRTに反映される**ようにする。
+    - **Pass5（オプション）:** SRT生成後の後処理として、指定文字数を超える長行のみLLMで改行する（タイムコードは変更しない）。
 *   **プロンプトの役割（two-pass）:**
     1.  パス1: 置換/削除のみを operations 配列(JSON)で返す。挿入禁止・順序を変えない。
     2.  パス2: 17文字以内の自然な行分割を `{"lines":[{"from":0,"to":10,"text":"..."}]}` 形式で返す。
@@ -144,7 +178,7 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
     *   エラー終了時に具体的な再開手順を表示
     *   例: `python -m src.cli.main run input.wav --resume temp/progress_20250120_103000.json`
 *   **ログ記録:**
-    *   `logs/processing.log` に処理状況を記録
+    *   `logs/processing.log` に処理状況を記録（TODO: 現状は標準出力中心）
     *   LLM生応答は `logs/llm_raw/` に **1 run（音声×モデル）につき1ファイル** として集約保存（Pass1〜Pass4の生JSONをパスごとセクションにまとめる）
     *   LLM使用量・時間と概算コストは `logs/metrics/{音声ファイル名}_{日付}_{run_id}_metrics.json` に保存し、以下をJSONで持つ:
         *   全体の経過時間（人間が読みやすい形式の `total_elapsed_time`。例: `8m 22.35s`）
@@ -152,7 +186,9 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
         *   入力音声の長さ（wordタイムスタンプの先頭〜末尾を元にした `audio_duration_time`）
         *   Pass1〜Pass3 のトークン数・処理時間、および実際に使用した `provider` / `model`
         *   Pass4 のトークン数・処理時間（複数回呼び出し分を合計）、および `provider` / `model`
+        *   Pass5 のトークン数・処理時間（有効時のみ）
         *   プロバイダー/モデルごとの 1M トークン単価（`config/llm_pricing.json`）を用いて算出した概算コスト（Pass単位の `cost_input_usd` / `cost_output_usd` / `cost_total_usd` と、run全体の `run_total_cost_usd`）
+    *   GUIの「ログ保存」をONにした場合は、SRT出力先（`subtitle_dir`）配下の `logs/` にログ一式をまとめて保存する（デバッグ用）
 
 ### Step 3: タイムスタンプ再計算 (Local)
 
@@ -193,7 +229,7 @@ python -m src.cli.main run <音声ファイル> [オプション]
 ```
 
 #### 主なオプション（実装に合わせて更新）
-- `--models kotoba,mlx` : 使用するランナーをカンマ区切り指定。未指定なら **MLX large-v3のみ** 実行。
+- `--models mlx,openai` : 使用するランナーをカンマ区切り指定。未指定なら **プラットフォーム別デフォルト**（macOS: `mlx` / それ以外: `openai`）を実行。
 - `--llm {google|openai|anthropic}` : LLM整形プロバイダー。**未指定なら整形・SRT出力を行わず、文字起こしJSONのみ保存**（Plan推奨は google）。
 - `--rewrite / --no-rewrite` : 語尾リライトを有効化（デフォルトNoneでプロバイダー既定に従う）。
 - （二段階LLMはデフォルトで常時有効。切替オプションなし）
@@ -206,6 +242,7 @@ python -m src.cli.main run <音声ファイル> [オプション]
 - 音声×モデル×実行時刻ごとに `temp/poc_samples/{run_id}.json` を保存（内部的に **最大5件まで** を保持し、古いJSONから自動削除してディスク肥大化を防ぐ）。
 - LLM整形を実行した場合のみ `{subtitle_dir}/{run_id}.srt` を自動命名で保存（`subtitle_dir` のデフォルトは `output/`、`--subtitle-dir` で変更可能）。  
   - 既に同名の `*.srt` が存在する場合は、OSやクラウドストレージと同様に `name.srt`, `name (1).srt`, `name (2).srt` ... のように **連番サフィックスを付与** して保存し、既存ファイルを上書きしない。
+- GUIの「ログ保存」をONにした場合は `{subtitle_dir}/logs/` 配下に `poc_samples/`, `progress/`, `metrics/`, `llm_raw/` を保存（ファイル数上限なし）。
 
 #### 実行例
 ```bash
@@ -244,13 +281,17 @@ python -m src.cli.main run samples/sample_audio.m4a --llm anthropic --rewrite
     *   [ ] **詳細モード（上級者向け）**  
         - GUI上の折りたたみセクションで、Pass1〜Pass4 のモデル名を **プルダウン（Combobox）** から個別に選択できる（候補は `config/llm_profiles.json` などプロファイル定義から自動生成）。  
         - CLIの `--llm-profile` と `LLM_PASS*_MODEL` 相当の設定をGUIから調整できるイメージ。
+    *   [ ] **Pass5（長行改行）**  
+        - 指定文字数を超える長行のみを後処理で改行する（タイムコードは変更しない）。  
+        - 文字数（例: 17）と、（必要なら）使用モデルを指定できる。
     *   [ ] **語尾調整・リライトを行う**（デフォルトOFF：原文維持＋フィラー削除のみ）
     *   [ ] **高精度モード**（large-v3モデル使用。OFFの場合はmediumモデルで高速化）
 *   **出力:**
     *   デフォルトでは `output/` ディレクトリに `{run_id}.srt` を保存（CLIと共通）。  
         * 既に同名ファイルが存在する場合は `name.srt`, `name (1).srt`, `name (2).srt` ... のように **連番サフィックスを付けて保存** し、既存ファイルを保持する。
     *   GUI からは「保存先フォルダを選択」ボタンで任意のディレクトリを指定できる。
-    *   完了時に通知を表示し、GUI下部に「総トークン数」「概算APIコスト（USD、小数点第3位まで）」「総処理時間（X分Y秒）」を表示する。
+    *   完了時に通知を表示し、GUI下部に「総トークン数」「概算APIコスト（USD、小数点第3位まで）」「総処理時間（待機含む）」を表示する。
+        *   追加で、待機時間 / 実処理時間 と、パス別処理時間（Pass1〜Pass4、Pass5は有効時のみ）を表示する。
 
 #### 将来のWebアプリ版について（メモ）
 - 本要件定義のMVPでは「ローカル実行できるGUI（Tkinter / Flet想定）」を優先し、ブラウザ上で動くWebアプリ版は**別フェーズ**で検討する。  

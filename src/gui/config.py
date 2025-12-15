@@ -199,6 +199,29 @@ class GuiConfig:
         self._config["pass5_max_chars"] = chars
         self.save_config()
 
+    def get_pass5_model(self) -> str | None:
+        """Pass5（長行改行）のモデル名を取得する。"""
+        model = self.get_pass_model("pass5", "").strip()
+        if model:
+            return model
+        legacy = self._config.get("pass5_model")
+        if isinstance(legacy, str) and legacy.strip():
+            return legacy.strip()
+        return None
+
+    def set_pass5_model(self, model: str | None) -> None:
+        """Pass5（長行改行）のモデル名を保存する。"""
+        if model is None:
+            if isinstance(self._config.get("pass_models"), dict):
+                self._config["pass_models"].pop("pass5", None)
+            self._config.pop("pass5_model", None)
+        else:
+            self._config.setdefault("pass_models", {})
+            if isinstance(self._config.get("pass_models"), dict):
+                self._config["pass_models"]["pass5"] = model
+            self._config.pop("pass5_model", None)
+        self.save_config()
+
     # --- ワークフロー設定 ---
 
     def get_workflow(self) -> str:

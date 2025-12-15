@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 from typing import List, Sequence
 
 from src.llm.two_pass import (
@@ -38,6 +39,7 @@ class TwoPassFormatter(BaseTwoPassFormatter):
         *,
         run_id: str | None = None,
         source_name: str | None = None,
+        raw_log_dir: Path | None = None,
         fill_gaps: bool = True,
         max_gap_duration: float | None = None,
         gap_padding: float = 0.15,
@@ -57,6 +59,7 @@ class TwoPassFormatter(BaseTwoPassFormatter):
             glossary_terms=glossary_terms,
             run_id=run_id,
             source_name=source_name,
+            raw_log_dir=raw_log_dir,
             fill_gaps=fill_gaps,
             max_gap_duration=max_gap_duration,
             gap_padding=gap_padding,
@@ -152,4 +155,3 @@ __all__ = [
     "TwoPassFormatter",
     "TwoPassResult",
 ]
-
