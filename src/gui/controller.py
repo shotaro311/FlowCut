@@ -77,6 +77,7 @@ class GuiController:
             # 他のワークフローが実行中の場合は待機
             self._notify(on_progress, "待機中（他の処理完了待ち）", 0)
             with self._execution_lock:
+                t_processing_start = time.perf_counter()
                 try:
                     # プログレスコールバックをワークフローID付きでラップ
                     safe_progress_callback = None
@@ -101,16 +102,22 @@ class GuiController:
                     model_slugs = resolve_models(None)
                     result_paths = execute_poc_run(audio_files, model_slugs, options)
                     t_end = time.perf_counter()
-                    elapsed_sec = max(0.0, t_end - t_start)
+                    total_elapsed_sec = max(0.0, t_end - t_start)
+                    wait_elapsed_sec = max(0.0, t_processing_start - t_start)
+                    processing_elapsed_sec = max(0.0, t_end - t_processing_start)
 
                     # メトリクス集計
                     metrics = self._collect_metrics_summary(
                         audio_path=audio_path,
                         model_slugs=model_slugs,
                         timestamp=options.timestamp,
-                        total_elapsed_sec=elapsed_sec,
+                        total_elapsed_sec=total_elapsed_sec,
                         metrics_root=self._resolve_metrics_root(options),
                     )
+                    if metrics is None:
+                        metrics = {}
+                    metrics["wait_elapsed_sec"] = wait_elapsed_sec
+                    metrics["processing_elapsed_sec"] = processing_elapsed_sec
 
                     self._notify(on_success, result_paths, metrics)
                 except Exception as exc:
@@ -241,6 +248,7 @@ class GuiController:
                 "total_cost_usd": 0.0,
                 "total_elapsed_sec": total_elapsed_sec,
                 "metrics_files_found": 0,
+                "per_runner": {},
             }
 
         root = metrics_root or Path("logs/metrics")
@@ -250,24 +258,29 @@ class GuiController:
                 "total_cost_usd": 0.0,
                 "total_elapsed_sec": total_elapsed_sec,
                 "metrics_files_found": 0,
+                "per_runner": {},
             }
 
         total_tokens = 0
         total_cost = 0.0
         metrics_files_found = 0
+        per_runner: dict = {}
 
         # ファイル名フォーマットは usage_metrics.write_run_metrics_file を参照
         # {audio_file.name}_{date_str}_{run_id}_metrics.json
         for slug in model_slugs:
             run_id = f"{audio_path.stem}_{slug}_{timestamp}"
             pattern = f"{audio_path.name}_*_{run_id}_metrics.json"
-            for path in root.glob(pattern):
+            matched = sorted(root.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+            for path in matched[:1]:
                 try:
                     data = json.loads(path.read_text(encoding="utf-8"))
                 except Exception:
                     continue
                 metrics_files_found += 1
+                stage_timings_time = data.get("stage_timings_time") or {}
                 llm_tokens = data.get("llm_tokens") or {}
+                pass_durations: dict = {}
                 if isinstance(llm_tokens, dict):
                     for entry in llm_tokens.values():
                         if not isinstance(entry, dict):
@@ -278,6 +291,14 @@ class GuiController:
                             total_tokens += int(raw_total)
                         else:
                             total_tokens += int(entry.get("prompt_tokens") or 0) + int(entry.get("completion_tokens") or 0)
+
+                    # duration_time を pass_label ごとに収集
+                    for label, entry in llm_tokens.items():
+                        if not isinstance(entry, dict):
+                            continue
+                        duration = entry.get("duration_time")
+                        if isinstance(duration, str) and duration.strip():
+                            pass_durations[str(label)] = duration.strip()
                 cost = data.get("run_total_cost_usd")
                 if isinstance(cost, (int, float)) and float(cost) > 0:
                     total_cost += float(cost)
@@ -291,11 +312,22 @@ class GuiController:
                             if isinstance(entry_cost, (int, float)):
                                 total_cost += float(entry_cost)
 
+                # GUI表示用の内訳（runnerごと）
+                transcribe_time = stage_timings_time.get("transcribe_sec") if isinstance(stage_timings_time, dict) else None
+                llm_two_pass_time = stage_timings_time.get("llm_two_pass_sec") if isinstance(stage_timings_time, dict) else None
+                per_runner[slug] = {
+                    "metrics_file": str(path),
+                    "transcribe_time": transcribe_time,
+                    "llm_two_pass_time": llm_two_pass_time,
+                    "pass_durations": pass_durations,
+                }
+
         return {
             "total_tokens": total_tokens,
             "total_cost_usd": total_cost,
             "total_elapsed_sec": total_elapsed_sec,
             "metrics_files_found": metrics_files_found,
+            "per_runner": per_runner,
         }
 
     def _notify(self, callback: Callable[..., None] | None, *args, **kwargs) -> None:

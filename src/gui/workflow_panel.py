@@ -310,18 +310,60 @@ class WorkflowPanel(ttk.Frame):
         if metrics:
             total_tokens = metrics.get("total_tokens") or 0
             total_cost = float(metrics.get("total_cost_usd") or 0.0)
-            elapsed_sec = float(metrics.get("total_elapsed_sec") or 0.0)
-            time_str = self._format_elapsed(elapsed_sec)
+            total_elapsed_sec = float(metrics.get("total_elapsed_sec") or 0.0)
             metrics_files_found = int(metrics.get("metrics_files_found") or 0)
-            if metrics_files_found <= 0:
-                self.metrics_var.set(f"トークン: - / コスト: - / 時間: {time_str}（未取得）")
+            time_str = self._format_elapsed(total_elapsed_sec)
+
+            wait_elapsed_sec = metrics.get("wait_elapsed_sec")
+            processing_elapsed_sec = metrics.get("processing_elapsed_sec")
+            wait_str = self._format_elapsed(float(wait_elapsed_sec)) if isinstance(wait_elapsed_sec, (int, float)) else None
+            processing_str = (
+                self._format_elapsed(float(processing_elapsed_sec)) if isinstance(processing_elapsed_sec, (int, float)) else None
+            )
+
+            lines: list[str] = []
+            if wait_str is not None and processing_str is not None:
+                lines.append(f"時間: {time_str}（待機 {wait_str} / 実処理 {processing_str}）")
             else:
-                suffix = ""
-                if int(total_tokens) <= 0 and total_cost <= 0.0:
-                    suffix = "（LLM未実行/usage未取得の可能性）"
-                self.metrics_var.set(
-                    f"トークン: {int(total_tokens)} / コスト: ${total_cost:.3f} / 時間: {time_str}{suffix}"
-                )
+                lines.append(f"時間: {time_str}")
+
+            if metrics_files_found <= 0:
+                lines.append("トークン: - / コスト: -（メトリクス未取得）")
+                self.metrics_var.set("\n".join(lines))
+                return
+
+            suffix = ""
+            if int(total_tokens) <= 0 and total_cost <= 0.0:
+                suffix = "（LLM未実行/usage未取得の可能性）"
+            lines.append(f"トークン: {int(total_tokens)} / コスト: ${total_cost:.3f}{suffix}")
+
+            per_runner = metrics.get("per_runner") or {}
+            if isinstance(per_runner, dict) and per_runner:
+                ordered_slugs = sorted(per_runner.keys())
+                for slug in ordered_slugs:
+                    info = per_runner.get(slug) or {}
+                    if not isinstance(info, dict):
+                        continue
+                    transcribe_time = info.get("transcribe_time") or "-"
+                    llm_two_pass_time = info.get("llm_two_pass_time") or "-"
+                    durations = info.get("pass_durations") or {}
+                    if not isinstance(durations, dict):
+                        durations = {}
+
+                    p1 = durations.get("pass1", "-")
+                    p2 = durations.get("pass2", "-")
+                    p3 = durations.get("pass3", "-")
+                    p4 = durations.get("pass4", "-")
+
+                    lines.append(f"[{slug}] 文字起こし: {transcribe_time} / LLM合計: {llm_two_pass_time}")
+
+                    pass_line = f"[{slug}] Pass1: {p1} / Pass2: {p2} / Pass3: {p3} / Pass4: {p4}"
+                    p5 = durations.get("pass5")
+                    if isinstance(p5, str) and p5.strip():
+                        pass_line += f" / Pass5: {p5.strip()}"
+                    lines.append(pass_line)
+
+            self.metrics_var.set("\n".join(lines))
         else:
             self.metrics_var.set("")
 

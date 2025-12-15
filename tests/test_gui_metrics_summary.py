@@ -110,11 +110,18 @@ def test_collect_metrics_summary_reads_from_custom_metrics_root(tmp_path, monkey
     metrics_path.write_text(
         json.dumps(
             {
+                "stage_timings_time": {
+                    "transcribe_sec": "1.23s",
+                    "llm_two_pass_sec": "0.33s",
+                },
                 "llm_tokens": {
                     "pass1": {
                         "prompt_tokens": 1,
                         "completion_tokens": 2,
+                        "duration_time": "0.10s",
                     },
+                    "pass2": {"prompt_tokens": 0, "completion_tokens": 0, "duration_time": "0.20s"},
+                    "pass5": {"prompt_tokens": 0, "completion_tokens": 0, "duration_time": "0.50s"},
                 },
                 "run_total_cost_usd": 0.0,
             },
@@ -134,3 +141,9 @@ def test_collect_metrics_summary_reads_from_custom_metrics_root(tmp_path, monkey
     assert summary is not None
     assert summary["metrics_files_found"] == 1
     assert summary["total_tokens"] == 3
+    per_runner = summary.get("per_runner") or {}
+    assert per_runner["mlx"]["transcribe_time"] == "1.23s"
+    assert per_runner["mlx"]["llm_two_pass_time"] == "0.33s"
+    assert per_runner["mlx"]["pass_durations"]["pass1"] == "0.10s"
+    assert per_runner["mlx"]["pass_durations"]["pass2"] == "0.20s"
+    assert per_runner["mlx"]["pass_durations"]["pass5"] == "0.50s"
