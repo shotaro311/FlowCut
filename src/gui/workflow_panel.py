@@ -436,7 +436,9 @@ class WorkflowPanel(ttk.Frame):
         self.phase_var.set("完了")
         self.progress["value"] = 100
         if output_paths:
-            self.output_var.set(f"出力: {output_paths[-1].name}")
+            last_path = output_paths[-1]
+            display = f"{last_path.parent.name}/{last_path.name}" if last_path.parent.name else last_path.name
+            self.output_var.set(f"出力: {display}")
 
         if self.notify_on_complete_var.get():
             try:
@@ -449,6 +451,8 @@ class WorkflowPanel(ttk.Frame):
         
         # メトリクス表示
         if metrics:
+            total_prompt_tokens = int(metrics.get("total_prompt_tokens") or 0)
+            total_completion_tokens = int(metrics.get("total_completion_tokens") or 0)
             total_tokens = metrics.get("total_tokens") or 0
             total_cost = float(metrics.get("total_cost_usd") or 0.0)
             total_elapsed_sec = float(metrics.get("total_elapsed_sec") or 0.0)
@@ -469,14 +473,16 @@ class WorkflowPanel(ttk.Frame):
                 lines.append(f"時間: {time_str}")
 
             if metrics_files_found <= 0:
-                lines.append("トークン: - / コスト: -（メトリクス未取得）")
+                lines.append("トークン: - / - / - / コスト: -（メトリクス未取得）")
                 self.metrics_var.set("\n".join(lines))
                 return
 
             suffix = ""
             if int(total_tokens) <= 0 and total_cost <= 0.0:
                 suffix = "（LLM未実行/usage未取得の可能性）"
-            lines.append(f"トークン: {int(total_tokens)} / コスト: ${total_cost:.3f}{suffix}")
+            lines.append(
+                f"トークン: {total_prompt_tokens} / {total_completion_tokens} / {int(total_tokens)} / コスト: ${total_cost:.3f}{suffix}"
+            )
 
             per_runner = metrics.get("per_runner") or {}
             pass5_enabled = bool(metrics.get("pass5_enabled"))
@@ -491,20 +497,33 @@ class WorkflowPanel(ttk.Frame):
                     durations = info.get("pass_durations") or {}
                     if not isinstance(durations, dict):
                         durations = {}
-
-                    p1 = durations.get("pass1", "-")
-                    p2 = durations.get("pass2", "-")
-                    p3 = durations.get("pass3", "-")
-                    p4 = durations.get("pass4", "-")
+                    pass_metrics = info.get("pass_metrics") or {}
+                    if not isinstance(pass_metrics, dict):
+                        pass_metrics = {}
 
                     lines.append(f"[{slug}] 文字起こし: {transcribe_time} / LLM合計: {llm_two_pass_time}")
 
-                    pass_line = f"[{slug}] Pass1: {p1} / Pass2: {p2} / Pass3: {p3} / Pass4: {p4}"
+                    pass_labels = ["pass1", "pass2", "pass3", "pass4"]
                     if pass5_enabled:
-                        p5 = durations.get("pass5")
-                        value = p5.strip() if isinstance(p5, str) and p5.strip() else "-"
-                        pass_line += f" / Pass5: {value}"
-                    lines.append(pass_line)
+                        pass_labels.append("pass5")
+
+                    for label in pass_labels:
+                        duration = durations.get(label)
+                        duration_str = duration.strip() if isinstance(duration, str) and duration.strip() else "-"
+                        usage = pass_metrics.get(label) or {}
+                        if not isinstance(usage, dict):
+                            usage = {}
+                        prompt = usage.get("prompt_tokens")
+                        completion = usage.get("completion_tokens")
+                        total = usage.get("total_tokens")
+                        if isinstance(prompt, (int, float)) and isinstance(completion, (int, float)) and isinstance(total, (int, float)):
+                            token_str = f"{int(prompt)} / {int(completion)} / {int(total)}"
+                        else:
+                            token_str = "- / - / -"
+                        cost = usage.get("cost_total_usd")
+                        cost_str = f"${float(cost):.3f}" if isinstance(cost, (int, float)) else "-"
+                        pass_name = label.replace("pass", "Pass")
+                        lines.append(f"[{slug}] {pass_name}: {duration_str} / トークン: {token_str} / コスト: {cost_str}")
 
             self.metrics_var.set("\n".join(lines))
         else:

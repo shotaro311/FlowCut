@@ -188,7 +188,7 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
         *   Pass4 のトークン数・処理時間（複数回呼び出し分を合計）、および `provider` / `model`
         *   Pass5 のトークン数・処理時間（有効時のみ）
         *   プロバイダー/モデルごとの 1M トークン単価（`config/llm_pricing.json`）を用いて算出した概算コスト（Pass単位の `cost_input_usd` / `cost_output_usd` / `cost_total_usd` と、run全体の `run_total_cost_usd`）
-    *   GUIの「ログ保存」をONにした場合は、SRT出力先（`subtitle_dir`）配下の `logs/` にログ一式をまとめて保存する（デバッグ用）
+    *   GUIの「ログ保存」をONにした場合は、SRT出力先（`subtitle_dir`）配下に `{入力ファイル名(拡張子なし)}_{timestamp}/` を作成し、その中に `{run_id}.srt` と `logs/` をまとめて保存する（デバッグ用）
 
 ### Step 3: タイムスタンプ再計算 (Local)
 
@@ -242,7 +242,7 @@ python -m src.cli.main run <音声ファイル> [オプション]
 - 音声×モデル×実行時刻ごとに `temp/poc_samples/{run_id}.json` を保存（内部的に **最大5件まで** を保持し、古いJSONから自動削除してディスク肥大化を防ぐ）。
 - LLM整形を実行した場合のみ `{subtitle_dir}/{run_id}.srt` を自動命名で保存（`subtitle_dir` のデフォルトは `output/`、`--subtitle-dir` で変更可能）。  
   - 既に同名の `*.srt` が存在する場合は、OSやクラウドストレージと同様に `name.srt`, `name (1).srt`, `name (2).srt` ... のように **連番サフィックスを付与** して保存し、既存ファイルを上書きしない。
-- GUIの「ログ保存」をONにした場合は `{subtitle_dir}/logs/` 配下に `poc_samples/`, `progress/`, `metrics/`, `llm_raw/` を保存（ファイル数上限なし）。
+- GUIの「ログ保存」をONにした場合は `{subtitle_dir}/{入力ファイル名(拡張子なし)}_{timestamp}/` を作成し、配下に `{run_id}.srt` と `logs/poc_samples/`, `logs/progress/`, `logs/metrics/`, `logs/llm_raw/` を保存（ファイル数上限なし）。
 
 #### 実行例
 ```bash
@@ -291,7 +291,7 @@ python -m src.cli.main run samples/sample_audio.m4a --llm anthropic --rewrite
         * 既に同名ファイルが存在する場合は `name.srt`, `name (1).srt`, `name (2).srt` ... のように **連番サフィックスを付けて保存** し、既存ファイルを保持する。
     *   GUI からは「保存先フォルダを選択」ボタンで任意のディレクトリを指定できる。
     *   完了時に通知を表示し、GUI下部に「総トークン数」「概算APIコスト（USD、小数点第3位まで）」「総処理時間（待機含む）」を表示する。
-        *   追加で、待機時間 / 実処理時間 と、パス別処理時間（Pass1〜Pass4、Pass5は有効時のみ）を表示する。
+        *   追加で、待機時間 / 実処理時間 と、パス別の処理時間・トークン数（prompt / completion / total）・概算コスト（USD、Pass5は有効時のみ）を表示する。
 
 #### 将来のWebアプリ版について（メモ）
 - 本要件定義のMVPでは「ローカル実行できるGUI（Tkinter / Flet想定）」を優先し、ブラウザ上で動くWebアプリ版は**別フェーズ**で検討する。  

@@ -119,16 +119,18 @@ def execute_poc_run(
 
     timestamp = options.normalized_timestamp()
     saved_paths: List[Path] = []
-    logs_root: Path | None = None
     json_output_dir = options.output_dir
     progress_dir = options.progress_dir
     metrics_output_dir: Path | None = None
     raw_llm_log_dir: Path | None = None
     enforce_file_limits = True
+    run_output_dir: Path | None = None
 
     if options.save_logs:
-        # 出力先（subtitle_dir）直下へ logs/ を作り、必要な成果物をまとめる
-        logs_root = options.subtitle_dir / "logs"
+        # 1回の実行ごとにフォルダを作り、SRTと logs/ をまとめて保存する
+        run_base_dir = options.subtitle_dir / f"{audio_files[0].stem}_{timestamp}"
+        run_output_dir = generate_sequential_path(run_base_dir)
+        logs_root = run_output_dir / "logs"
         json_output_dir = logs_root / "poc_samples"
         progress_dir = logs_root / "progress"
         metrics_output_dir = logs_root / "metrics"
@@ -194,7 +196,8 @@ def execute_poc_run(
                 # 希望ファイル名 {run_id}.srt をベースに、
                 # 既存ファイルがある場合は audio (1).srt 形式の
                 # 連番サフィックス付きファイル名を採用する
-                desired_subtitle_path = options.subtitle_dir / f"{run_id}.srt"
+                subtitle_base_dir = run_output_dir or options.subtitle_dir
+                desired_subtitle_path = subtitle_base_dir / f"{run_id}.srt"
                 subtitle_path = generate_sequential_path(desired_subtitle_path)
                 subtitle_text: str | None = None
                 if not result.words:
@@ -223,7 +226,7 @@ def execute_poc_run(
                         workflow=options.workflow,
                         glossary_terms=options.glossary_terms,
                         run_id=run_id,
-                        source_name=audio_path.name,
+                        source_name=input_path.name,
                         start_delay=options.start_delay,
                         raw_log_dir=raw_llm_log_dir,
                     )
@@ -261,7 +264,7 @@ def execute_poc_run(
                                 max_chars=options.pass5_max_chars,
                                 model_override=model_override,
                                 run_id=run_id,
-                                source_name=audio_path.name,
+                                source_name=input_path.name,
                                 temperature=options.llm_temperature,
                                 timeout=options.llm_timeout,
                             ).process(subtitle_text)
@@ -321,7 +324,7 @@ def execute_poc_run(
                     total_elapsed = t_run_end - t_run_start
                     write_run_metrics_file(
                         run_id=run_id,
-                        source_name=audio_path.name,
+                        source_name=input_path.name,
                         runner_slug=slug,
                         timestamp=timestamp,
                         stage_timings_sec=stage_timings,
