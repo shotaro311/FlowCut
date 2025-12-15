@@ -52,6 +52,9 @@ class PocRunOptions:
     rewrite: bool | None = None
     llm_temperature: float | None = None
     llm_timeout: float | None = None
+    enable_pass5: bool = False
+    pass5_max_chars: int = 17
+    pass5_model: str | None = None
     progress_callback: Callable[[str, int], None] | None = None
     save_logs: bool = False
 
@@ -199,6 +202,25 @@ def execute_poc_run(
                         audio_path.name,
                         t_llm_end - t_llm_start,
                     )
+
+                    if options.enable_pass5 and subtitle_text:
+                        try:
+                            from src.llm.pass5_processor import Pass5Processor
+
+                            if options.progress_callback:
+                                options.progress_callback("LLM Pass 5", 98)
+                            model_override = options.pass5_model or options.llm_pass4_model or options.llm_pass3_model
+                            subtitle_text = Pass5Processor(
+                                provider=options.llm_provider,
+                                max_chars=options.pass5_max_chars,
+                                model_override=model_override,
+                                run_id=run_id,
+                                source_name=audio_path.name,
+                                temperature=options.llm_temperature,
+                                timeout=options.llm_timeout,
+                            ).process(subtitle_text)
+                        except Exception as exc:
+                            logger.warning("Pass5処理に失敗しました: %s", exc)
 
                 if subtitle_text:
                     subtitle_path.parent.mkdir(parents=True, exist_ok=True)
@@ -375,6 +397,9 @@ def prepare_resume_run(
         llm_timeout=(
             base_options.llm_timeout if base_options.llm_timeout is not None else option_meta.get("llm_timeout")
         ),
+        enable_pass5=option_meta.get("enable_pass5", base_options.enable_pass5),
+        pass5_max_chars=option_meta.get("pass5_max_chars", base_options.pass5_max_chars),
+        pass5_model=option_meta.get("pass5_model"),
     )
     return record, audio_files, [record.model], resume_options
 
@@ -464,6 +489,9 @@ def _build_progress_metadata(
         "rewrite": options.rewrite,
         "llm_temperature": options.llm_temperature,
         "llm_timeout": options.llm_timeout,
+        "enable_pass5": options.enable_pass5,
+        "pass5_max_chars": options.pass5_max_chars,
+        "pass5_model": options.pass5_model,
     }
     if options.resume_source:
         metadata["resume_source"] = str(options.resume_source)

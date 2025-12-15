@@ -48,11 +48,15 @@ class WorkflowPanel(ttk.Frame):
         self.pass4_model_var = tk.StringVar()
         self.advanced_visible = tk.BooleanVar(value=False)
         self.save_logs_var = tk.BooleanVar(value=False)
+        self.pass5_enabled_var = tk.BooleanVar(value=False)
+        self.pass5_max_chars_var = tk.StringVar(value="17")
+        self.pass5_model_var = tk.StringVar()
         
         # プロファイルとモデル
         self._profiles = list_profiles()
         self._models_by_provider = list_models_by_provider()
         self._pass_model_combos: list[ttk.Combobox] = []
+        self._pass5_model_combo: ttk.Combobox | None = None
         
         # フレームのタイトル
         title_frame = ttk.Frame(self)
@@ -142,6 +146,14 @@ class WorkflowPanel(ttk.Frame):
             variable=self.save_logs_var,
         )
         save_logs_check.pack(side=tk.LEFT, padx=(12, 0))
+
+        pass5_check = ttk.Checkbutton(
+            advanced_row,
+            text="Pass5（長行改行）",
+            variable=self.pass5_enabled_var,
+            command=self._toggle_pass5,
+        )
+        pass5_check.pack(side=tk.LEFT, padx=(12, 0))
         
         # 詳細設定エリア
         self.advanced_frame = ttk.Frame(options_frame)
@@ -162,6 +174,33 @@ class WorkflowPanel(ttk.Frame):
             )
             combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
             self._pass_model_combos.append(combo)
+
+        # Pass5 設定
+        self.pass5_frame = ttk.Frame(options_frame)
+        pass5_model_row = ttk.Frame(self.pass5_frame)
+        pass5_model_row.pack(fill=tk.X, pady=(2, 2))
+        ttk.Label(pass5_model_row, text="Pass5:", width=8).pack(side=tk.LEFT)
+        self._pass5_model_combo = ttk.Combobox(
+            pass5_model_row,
+            textvariable=self.pass5_model_var,
+            values=self._get_models_for_current_provider(),
+            state="readonly",
+        )
+        self._pass5_model_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._pass5_model_combo.bind("<<ComboboxSelected>>", self._on_pass5_model_changed)
+
+        pass5_chars_row = ttk.Frame(self.pass5_frame)
+        pass5_chars_row.pack(fill=tk.X, pady=(2, 2))
+        ttk.Label(pass5_chars_row, text="", width=8).pack(side=tk.LEFT)
+        ttk.Label(pass5_chars_row, text="文字数:").pack(side=tk.LEFT)
+        pass5_chars_entry = ttk.Entry(
+            pass5_chars_row,
+            textvariable=self.pass5_max_chars_var,
+            width=6,
+        )
+        pass5_chars_entry.pack(side=tk.LEFT, padx=(4, 0))
+        pass5_chars_entry.bind("<FocusOut>", self._on_pass5_max_chars_changed)
+        ttk.Label(pass5_chars_row, text="文字超過時に改行", foreground="#888888").pack(side=tk.LEFT, padx=(4, 0))
         
         # プログレスバー
         self.progress = ttk.Progressbar(self, mode="determinate", maximum=100)
@@ -228,6 +267,11 @@ class WorkflowPanel(ttk.Frame):
             self.output_dir = Path("output")
             self.output_dir_var.set("保存先フォルダ: output/ （デフォルト）")
 
+        self.pass5_enabled_var.set(bool(self.config.get_pass5_enabled()))
+        self.pass5_max_chars_var.set(str(self.config.get_pass5_max_chars()))
+        self.pass5_model_var.set(self.config.get_pass5_model() or "")
+        self._toggle_pass5()
+
     def select_file(self) -> None:
         """音声ファイルを選択する。"""
         path = filedialog.askopenfilename(
@@ -274,6 +318,23 @@ class WorkflowPanel(ttk.Frame):
         self.metrics_var.set("")
         self.progress["value"] = 0
         self._start_rolling_animation()
+
+        enable_pass5 = bool(self.pass5_enabled_var.get())
+        pass5_max_chars = 17
+        pass5_model = (self.pass5_model_var.get() or "").strip() or None
+        if enable_pass5:
+            try:
+                pass5_max_chars = int((self.pass5_max_chars_var.get() or "").strip())
+            except (TypeError, ValueError):
+                messagebox.showerror("エラー", "Pass5の文字数が不正です（例: 17）")
+                self._stop_rolling_animation()
+                self._set_running_state(False)
+                return
+            if pass5_max_chars < 8:
+                messagebox.showerror("エラー", "Pass5の文字数は 8 以上を指定してください。")
+                self._stop_rolling_animation()
+                self._set_running_state(False)
+                return
         
         # コントローラーで並列実行
         self.controller.run_workflow(
@@ -286,6 +347,9 @@ class WorkflowPanel(ttk.Frame):
             pass2_model=self.pass2_model_var.get().strip() or None,
             pass3_model=self.pass3_model_var.get().strip() or None,
             pass4_model=self.pass4_model_var.get().strip() or None,
+            enable_pass5=enable_pass5,
+            pass5_max_chars=pass5_max_chars,
+            pass5_model=pass5_model,
             save_logs=bool(self.save_logs_var.get()),
             on_start=self._on_start,
             on_success=self._on_success,
@@ -338,6 +402,7 @@ class WorkflowPanel(ttk.Frame):
             lines.append(f"トークン: {int(total_tokens)} / コスト: ${total_cost:.3f}{suffix}")
 
             per_runner = metrics.get("per_runner") or {}
+            pass5_enabled = bool(metrics.get("pass5_enabled"))
             if isinstance(per_runner, dict) and per_runner:
                 ordered_slugs = sorted(per_runner.keys())
                 for slug in ordered_slugs:
@@ -358,9 +423,10 @@ class WorkflowPanel(ttk.Frame):
                     lines.append(f"[{slug}] 文字起こし: {transcribe_time} / LLM合計: {llm_two_pass_time}")
 
                     pass_line = f"[{slug}] Pass1: {p1} / Pass2: {p2} / Pass3: {p3} / Pass4: {p4}"
-                    p5 = durations.get("pass5")
-                    if isinstance(p5, str) and p5.strip():
-                        pass_line += f" / Pass5: {p5.strip()}"
+                    if pass5_enabled:
+                        p5 = durations.get("pass5")
+                        value = p5.strip() if isinstance(p5, str) and p5.strip() else "-"
+                        pass_line += f" / Pass5: {value}"
                     lines.append(pass_line)
 
             self.metrics_var.set("\n".join(lines))
@@ -433,6 +499,14 @@ class WorkflowPanel(ttk.Frame):
         else:
             self.advanced_frame.pack_forget()
 
+    def _toggle_pass5(self) -> None:
+        enabled = bool(self.pass5_enabled_var.get())
+        self.config.set_pass5_enabled(enabled)
+        if enabled:
+            self.pass5_frame.pack(fill=tk.X, pady=(4, 2))
+        else:
+            self.pass5_frame.pack_forget()
+
     def _get_models_for_current_provider(self) -> list[str]:
         """現在のプロバイダーのモデル一覧を取得する。"""
         provider = self.llm_provider_var.get() or ""
@@ -474,6 +548,23 @@ class WorkflowPanel(ttk.Frame):
         models = self._get_models_for_current_provider()
         for combo in self._pass_model_combos:
             combo["values"] = models
+        if self._pass5_model_combo is not None:
+            self._pass5_model_combo["values"] = models
+
+    def _on_pass5_max_chars_changed(self, _event: object) -> None:
+        raw = (self.pass5_max_chars_var.get() or "").strip()
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = 17
+        if value < 8:
+            value = 8
+        self.pass5_max_chars_var.set(str(value))
+        self.config.set_pass5_max_chars(value)
+
+    def _on_pass5_model_changed(self, _event: object) -> None:
+        model = (self.pass5_model_var.get() or "").strip()
+        self.config.set_pass5_model(model or None)
 
     def _format_elapsed(self, seconds: float) -> str:
         """経過時間をフォーマットする。"""

@@ -90,6 +90,44 @@ class GuiConfig:
         self._config["google_api_key"] = api_key
         self.save_config()
 
+    def get_pass5_enabled(self) -> bool:
+        """Pass5（長行改行）の有効/無効を取得する。"""
+        return bool(self._config.get("pass5_enabled", False))
+
+    def set_pass5_enabled(self, enabled: bool) -> None:
+        """Pass5（長行改行）の有効/無効を保存する。"""
+        self._config["pass5_enabled"] = bool(enabled)
+        self.save_config()
+
+    def get_pass5_max_chars(self) -> int:
+        """Pass5（長行改行）の文字数閾値を取得する。"""
+        value = self._config.get("pass5_max_chars", 17)
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 17
+        return parsed
+
+    def set_pass5_max_chars(self, max_chars: int) -> None:
+        """Pass5（長行改行）の文字数閾値を保存する。"""
+        self._config["pass5_max_chars"] = int(max_chars)
+        self.save_config()
+
+    def get_pass5_model(self) -> str | None:
+        """Pass5（長行改行）のモデル名を取得する。"""
+        value = self._config.get("pass5_model")
+        if isinstance(value, str) and value.strip():
+            return value
+        return None
+
+    def set_pass5_model(self, model: str | None) -> None:
+        """Pass5（長行改行）のモデル名を保存する。"""
+        if model is None:
+            self._config.pop("pass5_model", None)
+        else:
+            self._config["pass5_model"] = model
+        self.save_config()
+
 
 # グローバルインスタンス
 _config_instance: GuiConfig | None = None

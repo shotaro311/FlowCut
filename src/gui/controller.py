@@ -52,6 +52,9 @@ class GuiController:
         pass2_model: str | None = None,
         pass3_model: str | None = None,
         pass4_model: str | None = None,
+        enable_pass5: bool = False,
+        pass5_max_chars: int = 17,
+        pass5_model: str | None = None,
         save_logs: bool = False,
         on_start: Callable[[], None] | None = None,
         on_success: Callable[[List[Path], dict | None], None] | None = None,
@@ -92,6 +95,9 @@ class GuiController:
                         pass2_model=pass2_model,
                         pass3_model=pass3_model,
                         pass4_model=pass4_model,
+                        enable_pass5=enable_pass5,
+                        pass5_max_chars=pass5_max_chars,
+                        pass5_model=pass5_model,
                         save_logs=save_logs,
                         progress_callback=safe_progress_callback,
                     )
@@ -118,6 +124,9 @@ class GuiController:
                         metrics = {}
                     metrics["wait_elapsed_sec"] = wait_elapsed_sec
                     metrics["processing_elapsed_sec"] = processing_elapsed_sec
+                    metrics["pass5_enabled"] = bool(options.enable_pass5)
+                    metrics["pass5_max_chars"] = int(options.pass5_max_chars)
+                    metrics["pass5_model"] = options.pass5_model
 
                     self._notify(on_success, result_paths, metrics)
                 except Exception as exc:
@@ -150,6 +159,9 @@ class GuiController:
         pass2_model: str | None = None,
         pass3_model: str | None = None,
         pass4_model: str | None = None,
+        enable_pass5: bool = False,
+        pass5_max_chars: int = 17,
+        pass5_model: str | None = None,
         save_logs: bool = False,
         progress_callback: Callable[[str, int], None] | None = None,
     ) -> PocRunOptions:
@@ -199,6 +211,9 @@ class GuiController:
             llm_pass3_model=p3,
             llm_pass4_model=p4,
             llm_timeout=settings.llm.request_timeout,
+            enable_pass5=bool(enable_pass5),
+            pass5_max_chars=int(pass5_max_chars),
+            pass5_model=pass5_model,
             progress_callback=progress_callback,
             save_logs=save_logs,
         )
