@@ -171,7 +171,7 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
     *   エラー終了時に具体的な再開手順を表示
     *   例: `python -m src.cli.main run input.wav --resume temp/progress_20250120_103000.json`
 *   **ログ記録:**
-    *   `logs/processing.log` に処理状況を記録
+    *   `logs/processing.log` に処理状況を記録（TODO: 現状は標準出力中心）
     *   LLM生応答は `logs/llm_raw/` に **1 run（音声×モデル）につき1ファイル** として集約保存（Pass1〜Pass4の生JSONをパスごとセクションにまとめる）
     *   LLM使用量・時間と概算コストは `logs/metrics/{音声ファイル名}_{日付}_{run_id}_metrics.json` に保存し、以下をJSONで持つ:
         *   全体の経過時間（人間が読みやすい形式の `total_elapsed_time`。例: `8m 22.35s`）
@@ -180,6 +180,7 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
         *   Pass1〜Pass3 のトークン数・処理時間、および実際に使用した `provider` / `model`
         *   Pass4 のトークン数・処理時間（複数回呼び出し分を合計）、および `provider` / `model`
         *   プロバイダー/モデルごとの 1M トークン単価（`config/llm_pricing.json`）を用いて算出した概算コスト（Pass単位の `cost_input_usd` / `cost_output_usd` / `cost_total_usd` と、run全体の `run_total_cost_usd`）
+    *   GUIの「ログ保存」をONにした場合は、SRT出力先（`subtitle_dir`）配下の `logs/` にログ一式をまとめて保存する（デバッグ用）
 
 ### Step 3: タイムスタンプ再計算 (Local)
 
@@ -231,6 +232,7 @@ python -m src.cli.main run <音声ファイル> [オプション]
 #### 出力パス
 - 音声×モデル×実行時刻ごとに `temp/poc_samples/{run_id}.json` を保存（内部的に **最大5件まで** を保持し、古いJSONから自動削除してディスク肥大化を防ぐ）。
 - LLM整形を実行した場合のみ `{subtitle_dir}/{run_id}.srt` を自動命名で保存（`subtitle_dir` のデフォルトは `output/`、`--subtitle-dir` で変更可能）。
+- GUIの「ログ保存」をONにした場合は `{subtitle_dir}/logs/` 配下に `poc_samples/`, `progress/`, `metrics/`, `llm_raw/` を保存（ファイル数上限なし）。
 
 #### 実行例
 ```bash
