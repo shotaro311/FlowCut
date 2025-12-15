@@ -48,7 +48,8 @@ python -m src.cli.main models
 
 ### 2. 文字起こし・整形実行 (`run`)
 
-音声ファイルを処理してSRT字幕を生成します。
+音声ファイルまたは動画ファイルを処理してSRT字幕を生成します。
+動画ファイル（.mp4, .mov, .mkv, .avi, .webm）の場合は、自動的に音声を抽出して処理します。
 
 #### 基本セットアップ（推奨）
 
@@ -60,13 +61,23 @@ python -m src.cli.main run /path/to/audio.mp3 \
   --llm-timeout 500
 ```
 
+動画ファイルを処理する場合:
+
+```bash
+python -m src.cli.main run /path/to/video.mp4 \
+  --llm google \
+  --no-simulate
+```
+
 #### よく使うオプション
 
 | オプション | 説明 | 例 |
-|------------|------|----|
+|------------|------|-----|
 | `--llm` | LLMプロバイダー指定 (google, openai, anthropic) | `--llm openai` |
 | `--llm-profile` | `config/llm_profiles.json` のプロファイルを使用 | `--llm-profile high_accuracy` |
 | `--start-delay` | 字幕全体の開始時間を遅らせる（秒）。冒頭の無音調整用 | `--start-delay 0.5` |
+| `--workflow` | 使用するワークフロー (`workflow1`, `workflow2`) | `--workflow workflow2` |
+| `--keep-audio` | 動画から抽出した音声ファイルを保存する | `--keep-audio` |
 | `--simulate` | 音声認識をスキップし、ダミーデータでLLM整形のみテスト | `--simulate` (デフォルト有効) |
 | `--no-simulate` | 実際に音声認識(Whisper)を実行する | `--no-simulate` |
 | `--verbose` | 詳細ログを表示 | `--verbose` |
@@ -80,6 +91,15 @@ python -m src.cli.main run input.wav \
   --no-simulate \
   --llm google \
   --start-delay 0.2
+```
+
+**動画ファイル処理（抽出した音声を保存）:**
+
+```bash
+python -m src.cli.main run video.mp4 \
+  --no-simulate \
+  --llm google \
+  --keep-audio
 ```
 
 **開発・テスト（シミュレーション + OpenAI + 詳細ログ）:**

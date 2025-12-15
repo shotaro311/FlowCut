@@ -27,6 +27,12 @@ from src.utils.progress import (
     save_progress,
 )
 from src.utils.paths import generate_sequential_path
+from src.utils.audio_extractor import (
+    is_video_file,
+    extract_audio_from_video,
+    cleanup_extracted_audio,
+    AudioExtractionError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +63,7 @@ class PocRunOptions:
     pass5_max_chars: int = 17
     pass5_model: str | None = None
     pass5_provider: str | None = None
+    keep_extracted_audio: bool = False  # 動画から抽出した音声を保存するか
     progress_callback: Callable[[str, int], None] | None = None
 
     def normalized_timestamp(self) -> str:
@@ -116,7 +123,25 @@ def execute_poc_run(
         )
         logger.info("=== %s (%s) ===", slug, runner.display_name)
         runner.prepare(config)
-        for audio_path in audio_files:
+        for input_path in audio_files:
+            # 動画ファイルの場合は音声を抽出
+            extracted_audio_path: Path | None = None
+            if is_video_file(input_path):
+                if options.progress_callback:
+                    options.progress_callback("動画から音声抽出中", 5)
+                logger.info("動画ファイルを検出: %s", input_path.name)
+                try:
+                    extracted_audio_path = extract_audio_from_video(input_path)
+                    audio_path = extracted_audio_path
+                    # 元の動画ファイル名を保持（SRTファイル名に使用）
+                    original_stem = input_path.stem
+                except AudioExtractionError as exc:
+                    logger.error("音声抽出に失敗しました: %s", exc)
+                    raise
+            else:
+                audio_path = input_path
+                original_stem = input_path.stem
+            
             # Phase 1: Whisper transcription
             if options.progress_callback:
                 options.progress_callback("Whisper文字起こし", 20)
@@ -131,7 +156,8 @@ def execute_poc_run(
                 t_transcribe_end - t_transcribe_start,
             )
             blocks = build_single_block(result)
-            run_id = f"{audio_path.stem}_{slug}_{timestamp}"
+            # run_idは元のファイル名（動画の場合は動画名）をベースにする
+            run_id = f"{original_stem}_{slug}_{timestamp}"
             output_path = options.output_dir / f"{run_id}.json"
             save_result(result, output_path, blocks=blocks)
 
@@ -278,6 +304,10 @@ def execute_poc_run(
             if options.progress_callback:
                 options.progress_callback("完了", 100)
             saved_paths.append(output_path)
+            
+            # 動画から抽出した音声ファイルのクリーンアップ
+            if extracted_audio_path and not options.keep_extracted_audio:
+                cleanup_extracted_audio(extracted_audio_path)
     return saved_paths
 
 

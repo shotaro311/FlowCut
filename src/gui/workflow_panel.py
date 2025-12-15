@@ -72,6 +72,12 @@ class WorkflowPanel(ttk.Frame):
         self.pass5_max_chars_var = tk.StringVar(value="17")
         self.pass5_model_var = tk.StringVar()
         
+        # ワークフロー選択
+        self.workflow_var = tk.StringVar(value="workflow1")
+        
+        # 動画から抽出した音声を保存するか
+        self.keep_extracted_audio_var = tk.BooleanVar(value=False)
+        
         # 全モデルリスト
         self._all_models = _get_all_models()
         self._pass_model_combos: list[ttk.Combobox] = []
@@ -110,6 +116,21 @@ class WorkflowPanel(ttk.Frame):
         # LLMオプション
         options_frame = ttk.LabelFrame(self, text="LLMオプション")
         options_frame.pack(fill=tk.X, pady=(0, 8))
+        
+        # ワークフロー選択
+        workflow_row = ttk.Frame(options_frame)
+        workflow_row.pack(fill=tk.X, pady=(2, 8))
+        ttk.Label(workflow_row, text="ワークフロー:", width=12).pack(side=tk.LEFT)
+        workflow_combo = ttk.Combobox(
+            workflow_row,
+            textvariable=self.workflow_var,
+            values=["workflow1", "workflow2"],
+            state="readonly",
+            width=15,
+        )
+        workflow_combo.pack(side=tk.LEFT)
+        workflow_combo.bind("<<ComboboxSelected>>", self._on_workflow_changed)
+        ttk.Label(workflow_row, text="workflow2: 最適化版", foreground="#888888").pack(side=tk.LEFT, padx=(8, 0))
         
         # Pass1-4のモデル選択（常に表示、全モデルから選択可能）
         for pass_name, var in [
@@ -182,6 +203,18 @@ class WorkflowPanel(ttk.Frame):
         pass5_chars_entry.bind("<FocusOut>", self._on_pass5_chars_changed)
         ttk.Label(pass5_chars_row, text="文字超過時に改行", foreground="#888888").pack(side=tk.LEFT, padx=(4, 0))
         
+        # 動画から抽出した音声を保存するか
+        keep_audio_row = ttk.Frame(options_frame)
+        keep_audio_row.pack(fill=tk.X, pady=(8, 2))
+        keep_audio_check = ttk.Checkbutton(
+            keep_audio_row,
+            text="動画から抽出した音声ファイルを保存",
+            variable=self.keep_extracted_audio_var,
+            command=self._on_keep_extracted_audio_changed,
+        )
+        keep_audio_check.pack(side=tk.LEFT)
+        ttk.Label(keep_audio_row, text="（動画入力時のみ）", foreground="#888888").pack(side=tk.LEFT, padx=(4, 0))
+        
         # プログレスバー
         self.progress = ttk.Progressbar(self, mode="determinate", maximum=100)
         self.progress.pack(fill=tk.X, pady=(4, 4))
@@ -238,6 +271,12 @@ class WorkflowPanel(ttk.Frame):
         else:
             self.output_dir = Path("output")
             self.output_dir_var.set("保存先フォルダ: output/ （デフォルト）")
+        
+        # ワークフロー設定
+        self.workflow_var.set(self.config.get_workflow())
+        
+        # 抽出音声保存設定
+        self.keep_extracted_audio_var.set(self.config.get_keep_extracted_audio())
 
     # --- イベントハンドラ（設定保存） ---
 
@@ -266,15 +305,28 @@ class WorkflowPanel(ttk.Frame):
         chars = self._get_pass5_max_chars()
         self.config.set_pass5_max_chars(chars)
 
+    def _on_workflow_changed(self, event: object) -> None:
+        """ワークフロー変更時に設定を保存。PassごとのLLMモデル設定はそのまま引き継ぐ。"""
+        self.config.set_workflow(self.workflow_var.get())
+
+    def _on_keep_extracted_audio_changed(self) -> None:
+        """抽出音声保存設定変更時に設定を保存。"""
+        self.config.set_keep_extracted_audio(self.keep_extracted_audio_var.get())
+
     def select_file(self) -> None:
-        """音声ファイルを選択する。"""
+        """メディアファイル（音声/動画）を選択する。"""
         path = filedialog.askopenfilename(
-            title="音声ファイルを選択",
-            filetypes=[("Audio Files", "*.wav *.mp3 *.m4a *.flac"), ("All Files", "*.*")],
+            title="音声/動画ファイルを選択",
+            filetypes=[
+                ("Media Files", "*.wav *.mp3 *.m4a *.flac *.mp4 *.mov *.mkv *.avi *.webm"),
+                ("Audio Files", "*.wav *.mp3 *.m4a *.flac"),
+                ("Video Files", "*.mp4 *.mov *.mkv *.avi *.webm"),
+                ("All Files", "*.*"),
+            ],
         )
         if path:
             self.selected_file = Path(path)
-            self.file_var.set(f"音声ファイル: {self.selected_file.name}")
+            self.file_var.set(f"メディア: {self.selected_file.name}")
 
     def select_output_dir(self) -> None:
         """保存先フォルダを選択する。"""
@@ -315,6 +367,7 @@ class WorkflowPanel(ttk.Frame):
             subtitle_dir=self.output_dir,
             llm_provider=provider,
             llm_profile=None,  # プロファイル廃止
+            workflow=self.workflow_var.get(),
             pass1_model=self.pass1_model_var.get().strip() or None,
             pass2_model=self.pass2_model_var.get().strip() or None,
             pass3_model=self.pass3_model_var.get().strip() or None,
@@ -324,6 +377,7 @@ class WorkflowPanel(ttk.Frame):
             pass5_max_chars=self._get_pass5_max_chars(),
             pass5_model=pass5_model,
             pass5_provider=pass5_provider,
+            keep_extracted_audio=self.keep_extracted_audio_var.get(),
             on_start=self._on_start,
             on_success=self._on_success,
             on_error=self._on_error,

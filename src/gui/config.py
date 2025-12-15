@@ -174,6 +174,32 @@ class GuiConfig:
         self._config["pass5_max_chars"] = chars
         self.save_config()
 
+    # --- ワークフロー設定 ---
+
+    def get_workflow(self) -> str:
+        """選択中のワークフローを取得する。"""
+        workflow = self._config.get("workflow", "workflow1")
+        if workflow in ("workflow1", "workflow2"):
+            return workflow
+        return "workflow1"
+
+    def set_workflow(self, workflow: str) -> None:
+        """ワークフローの設定を保存する。"""
+        if workflow in ("workflow1", "workflow2"):
+            self._config["workflow"] = workflow
+            self.save_config()
+
+    # --- 抽出音声保存設定 ---
+
+    def get_keep_extracted_audio(self) -> bool:
+        """抽出した音声を保存するかどうかを取得する。"""
+        return bool(self._config.get("keep_extracted_audio", False))
+
+    def set_keep_extracted_audio(self, keep: bool) -> None:
+        """抽出した音声を保存するかどうかを保存する。"""
+        self._config["keep_extracted_audio"] = keep
+        self.save_config()
+
 
 # グローバルインスタンス
 _config_instance: GuiConfig | None = None

@@ -48,6 +48,7 @@ class GuiController:
         subtitle_dir: Path | None = None,
         llm_provider: str | None = None,
         llm_profile: str | None = None,
+        workflow: str = "workflow1",
         pass1_model: str | None = None,
         pass2_model: str | None = None,
         pass3_model: str | None = None,
@@ -57,6 +58,7 @@ class GuiController:
         pass5_max_chars: int = 17,
         pass5_model: str | None = None,
         pass5_provider: str | None = None,
+        keep_extracted_audio: bool = False,
         on_start: Callable[[], None] | None = None,
         on_success: Callable[[List[Path], dict | None], None] | None = None,
         on_error: Callable[[Exception], None] | None = None,
@@ -90,6 +92,7 @@ class GuiController:
                         subtitle_dir=subtitle_dir,
                         llm_provider=llm_provider,
                         llm_profile=llm_profile,
+                        workflow=workflow,
                         pass1_model=pass1_model,
                         pass2_model=pass2_model,
                         pass3_model=pass3_model,
@@ -99,6 +102,7 @@ class GuiController:
                         pass5_max_chars=pass5_max_chars,
                         pass5_model=pass5_model,
                         pass5_provider=pass5_provider,
+                        keep_extracted_audio=keep_extracted_audio,
                         progress_callback=safe_progress_callback,
                     )
                     # タイムスタンプを固定してGUI側からも出力パスを把握できるようにする
@@ -156,6 +160,7 @@ class GuiController:
         subtitle_dir: Path | None = None,
         llm_provider: str | None = None,
         llm_profile: str | None = None,
+        workflow: str = "workflow1",
         pass1_model: str | None = None,
         pass2_model: str | None = None,
         pass3_model: str | None = None,
@@ -165,6 +170,7 @@ class GuiController:
         pass5_max_chars: int = 17,
         pass5_model: str | None = None,
         pass5_provider: str | None = None,
+        keep_extracted_audio: bool = False,
         progress_callback: Callable[[str, int], None] | None = None,
     ) -> PocRunOptions:
         """GUIから渡された設定と環境値を組み合わせてPocRunOptionsを構築する。
@@ -208,6 +214,7 @@ class GuiController:
             simulate=False,
             llm_provider=provider,
             llm_profile=llm_profile,
+            workflow=workflow,
             llm_pass1_model=p1,
             llm_pass2_model=p2,
             llm_pass3_model=p3,
@@ -218,6 +225,7 @@ class GuiController:
             pass5_max_chars=pass5_max_chars,
             pass5_model=pass5_model,
             pass5_provider=pass5_provider,
+            keep_extracted_audio=keep_extracted_audio,
             progress_callback=progress_callback,
         )
 
