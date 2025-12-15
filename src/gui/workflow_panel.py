@@ -1,11 +1,13 @@
 """個別のワークフロー処理パネルを管理するウィジェット。"""
 from __future__ import annotations
 
+import os
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable, Dict, Any
 
+from src.config.settings import get_settings
 from src.llm.profiles import get_profile, list_profiles, list_models_by_provider
 from src.gui.config import get_config
 
@@ -58,6 +60,7 @@ class WorkflowPanel(ttk.Frame):
         
         self._build_widgets()
         self._load_initial_settings()
+        self._apply_status_text_colors()
 
     def _build_widgets(self) -> None:
         """ウィジェットを構築する。"""
@@ -162,12 +165,34 @@ class WorkflowPanel(ttk.Frame):
         ttk.Label(status_row, textvariable=self.phase_var).pack(side=tk.LEFT, padx=(4, 0))
         
         # 出力とメトリクス表示
-        self.output_label = ttk.Label(self, textvariable=self.output_var, foreground="#0b4f6c")
+        self.output_label = ttk.Label(self, textvariable=self.output_var)
         self.output_label.pack(fill=tk.X, pady=(0, 2))
         
-        self.metrics_label = ttk.Label(self, textvariable=self.metrics_var, foreground="#555555")
+        self.metrics_label = ttk.Label(self, textvariable=self.metrics_var)
         self.metrics_label.pack(fill=tk.X)
-        
+
+    def _apply_status_text_colors(self) -> None:
+        """ダークモードでも読めるように、状態表示の文字色を調整する。"""
+        style = ttk.Style()
+        bg = (
+            style.lookup("TFrame", "background")
+            or style.lookup(".", "background")
+            or self.root.cget("background")
+        )
+        try:
+            r, g, b = self.root.winfo_rgb(bg)
+            luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 65535.0
+            is_dark = luminance < 0.5
+        except Exception:
+            # 判定に失敗した場合は、従来の色味（ライト想定）でフォールバック
+            is_dark = False
+
+        output_color = "#6cb6ff" if is_dark else "#0b4f6c"
+        metrics_color = "#d6d6d6" if is_dark else "#555555"
+
+        self.output_label.configure(foreground=output_color)
+        self.metrics_label.configure(foreground=metrics_color)
+
     def _setup_button_styles(self) -> None:
         """ボタンスタイルを設定する。"""
         # ttkスタイルはプラットフォームによっては背景色が効かないため、
@@ -221,6 +246,17 @@ class WorkflowPanel(ttk.Frame):
         if self.is_running:
             messagebox.showinfo("情報", "このワークフローは実行中です。")
             return
+
+        provider = (self.llm_provider_var.get() or "").strip().lower()
+        if provider == "google":
+            # 失敗を握りつぶすと「完了なのにトークン/コストが0」のように見えるため、
+            # GUI側で先に設定漏れを検知して止める。
+            if not get_settings().llm.google_api_key and not os.getenv("GOOGLE_API_KEY"):
+                messagebox.showerror(
+                    "エラー",
+                    "Google APIキーが未設定です。\n画面上部の「API設定」から設定してください。",
+                )
+                return
         
         self._set_running_state(True)
         self.phase_var.set("準備中")
@@ -264,9 +300,16 @@ class WorkflowPanel(ttk.Frame):
             total_cost = float(metrics.get("total_cost_usd") or 0.0)
             elapsed_sec = float(metrics.get("total_elapsed_sec") or 0.0)
             time_str = self._format_elapsed(elapsed_sec)
-            self.metrics_var.set(
-                f"トークン: {int(total_tokens)} / コスト: ${total_cost:.3f} / 時間: {time_str}"
-            )
+            metrics_files_found = int(metrics.get("metrics_files_found") or 0)
+            if metrics_files_found <= 0:
+                self.metrics_var.set(f"トークン: - / コスト: - / 時間: {time_str}（未取得）")
+            else:
+                suffix = ""
+                if int(total_tokens) <= 0 and total_cost <= 0.0:
+                    suffix = "（LLM未実行/usage未取得の可能性）"
+                self.metrics_var.set(
+                    f"トークン: {int(total_tokens)} / コスト: ${total_cost:.3f} / 時間: {time_str}{suffix}"
+                )
         else:
             self.metrics_var.set("")
 

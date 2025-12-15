@@ -227,6 +227,7 @@ class GuiController:
                 "total_tokens": 0,
                 "total_cost_usd": 0.0,
                 "total_elapsed_sec": total_elapsed_sec,
+                "metrics_files_found": 0,
             }
 
         metrics_root = Path("logs/metrics")
@@ -235,10 +236,12 @@ class GuiController:
                 "total_tokens": 0,
                 "total_cost_usd": 0.0,
                 "total_elapsed_sec": total_elapsed_sec,
+                "metrics_files_found": 0,
             }
 
         total_tokens = 0
         total_cost = 0.0
+        metrics_files_found = 0
 
         # ファイル名フォーマットは usage_metrics.write_run_metrics_file を参照
         # {audio_file.name}_{date_str}_{run_id}_metrics.json
@@ -250,20 +253,36 @@ class GuiController:
                     data = json.loads(path.read_text(encoding="utf-8"))
                 except Exception:
                     continue
+                metrics_files_found += 1
                 llm_tokens = data.get("llm_tokens") or {}
                 if isinstance(llm_tokens, dict):
                     for entry in llm_tokens.values():
                         if not isinstance(entry, dict):
                             continue
-                        total_tokens += int(entry.get("total_tokens") or 0)
+                        # total_tokens が欠ける/0 の場合は prompt+completion で代替する
+                        raw_total = entry.get("total_tokens")
+                        if isinstance(raw_total, (int, float)) and int(raw_total) > 0:
+                            total_tokens += int(raw_total)
+                        else:
+                            total_tokens += int(entry.get("prompt_tokens") or 0) + int(entry.get("completion_tokens") or 0)
                 cost = data.get("run_total_cost_usd")
-                if isinstance(cost, (int, float)):
+                if isinstance(cost, (int, float)) and float(cost) > 0:
                     total_cost += float(cost)
+                else:
+                    # run_total_cost_usd が無い/0 の場合は、パス別コストの合計で代替する
+                    if isinstance(llm_tokens, dict):
+                        for entry in llm_tokens.values():
+                            if not isinstance(entry, dict):
+                                continue
+                            entry_cost = entry.get("cost_total_usd")
+                            if isinstance(entry_cost, (int, float)):
+                                total_cost += float(entry_cost)
 
         return {
             "total_tokens": total_tokens,
             "total_cost_usd": total_cost,
             "total_elapsed_sec": total_elapsed_sec,
+            "metrics_files_found": metrics_files_found,
         }
 
     def _notify(self, callback: Callable[..., None] | None, *args, **kwargs) -> None:
