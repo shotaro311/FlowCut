@@ -6,6 +6,8 @@ import logging
 from pathlib import Path
 from typing import Any, Dict
 
+from src.utils.glossary import DEFAULT_GLOSSARY_TERMS, normalize_glossary_terms, parse_glossary_text
+
 logger = logging.getLogger(__name__)
 
 
@@ -112,6 +114,29 @@ class GuiConfig:
     def set_anthropic_api_key(self, api_key: str) -> None:
         """Anthropic APIキーの設定を保存する。"""
         self._config["anthropic_api_key"] = api_key
+        self.save_config()
+
+    # --- 辞書（Glossary） ---
+
+    def get_glossary_terms(self) -> list[str]:
+        """辞書（Glossary）の用語リストを取得する。
+
+        - 未設定の場合は DEFAULT_GLOSSARY_TERMS を返す
+        - 明示的に空（[]）が保存されている場合は空を返す
+        """
+        raw = self._config.get("glossary_terms", None)
+        if raw is None:
+            return list(DEFAULT_GLOSSARY_TERMS)
+        if isinstance(raw, str):
+            return parse_glossary_text(raw)
+        if isinstance(raw, list):
+            return normalize_glossary_terms([str(item) for item in raw])
+        logger.warning("無効な辞書（Glossary）設定: %s", type(raw))
+        return list(DEFAULT_GLOSSARY_TERMS)
+
+    def set_glossary_terms(self, terms: list[str]) -> None:
+        """辞書（Glossary）の用語リストを保存する。"""
+        self._config["glossary_terms"] = normalize_glossary_terms(terms)
         self.save_config()
 
     # --- Pass1-5モデル設定 ---

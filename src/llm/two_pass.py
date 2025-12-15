@@ -16,6 +16,7 @@ from src.llm.formatter import FormatterError, get_provider, FormatterRequest
 from src.llm.prompts import PromptPayload
 from src.transcribe.base import WordTimestamp
 from src.llm.usage_metrics import record_pass_time
+from src.utils.glossary import DEFAULT_GLOSSARY_TERMS, normalize_glossary_terms
 
 logger = logging.getLogger(__name__)
 RAW_LOG_DIR = Path("logs/llm_raw")
@@ -218,6 +219,16 @@ def _has_full_word_coverage(lines: Sequence["LineRange"], words: Sequence[WordTi
     return all(covered)
 
 
+def _has_same_line_ranges(before: Sequence["LineRange"], after: Sequence["LineRange"]) -> bool:
+    """Return True if line ranges (from/to) are identical and in the same order."""
+    if len(before) != len(after):
+        return False
+    for b, a in zip(before, after):
+        if b.start_idx != a.start_idx or b.end_idx != a.end_idx:
+            return False
+    return True
+
+
 class TwoPassFormatter:
     """Run two LLM passes and produce SRT without anchor alignment."""
 
@@ -231,6 +242,7 @@ class TwoPassFormatter:
         pass3_model: str | None = None,
         pass4_model: str | None = None,
         workflow: str = "workflow1",
+        glossary_terms: Sequence[str] | None = None,
         *,
         run_id: str | None = None,
         source_name: str | None = None,
@@ -260,6 +272,12 @@ class TwoPassFormatter:
             # Pass4 は settings.pass4_model（= LLM_PASS4_MODEL or LLM_PASS3_MODEL）を尊重しつつ、
             # プロファイルやCLIからの引数で上書きできるようにする。
             self.pass4_model = pass4_model or settings.pass4_model
+        # 辞書（Glossary）: None の場合はデフォルト辞書を利用する
+        self.glossary_terms = (
+            list(DEFAULT_GLOSSARY_TERMS)
+            if glossary_terms is None
+            else normalize_glossary_terms(glossary_terms)
+        )
         # ログ用コンテキスト（処理単位で1ファイルにまとめる）
         self.run_id = run_id
         self.source_name = source_name
@@ -396,6 +414,7 @@ class TwoPassFormatter:
             lines = _parse_lines(parsed2)
             if not lines:
                 raise FormatterError("行分割結果が空です")
+            pass2_lines = lines
 
             # Pass3: Validation (now always executed)
             from src.llm.validators import detect_issues
@@ -426,7 +445,12 @@ class TwoPassFormatter:
             if parsed3:
                 pass3_lines = _parse_lines(parsed3)
                 if pass3_lines and _has_full_word_coverage(pass3_lines, updated_words):
-                    lines = pass3_lines
+                    # workflow2では「タイムコード（= from/to）」を変えない方針のため、
+                    # Pass3が範囲を変更してきた場合は採用しない（text校正のみを許可）。
+                    if self.workflow == "workflow2" and not _has_same_line_ranges(pass2_lines, pass3_lines):
+                        logger.warning("Pass 3 changed line ranges in workflow2; using Pass 2 output instead")
+                    else:
+                        lines = pass3_lines
                 elif pass3_lines:
                     logger.warning(
                         "Pass 3 returned partial coverage (words=%d, lines=%d); using Pass 2 output instead",
@@ -827,37 +851,35 @@ class TwoPassFormatter:
     def _build_pass3_prompt(self, lines: Sequence[LineRange], words: Sequence[WordTimestamp], issues) -> str:
         """Build Pass 3 prompt for fixing detected issues."""
         if self.workflow == "workflow2":
-            # indexed を使わない簡潔版
+            # workflow2: 校正（誤字脱字・固有名詞・政治用語）を優先
             if issues:
                 issue_text = "\n".join(
                     [f"- {issue.description} → {issue.suggested_action}" for issue in issues]
                 )
             else:
-                issue_text = (
-                    "問題は検出されませんでした。念のため全行を確認し、問題があれば最小限の修正を行ってください。"
-                )
+                issue_text = "（検出された問題はありません）"
             current_lines = json.dumps(
                 [{"from": l.start_idx, "to": l.end_idx, "text": l.text} for l in lines],
                 ensure_ascii=False,
                 indent=2,
             )
+            glossary_text = "\n".join(self.glossary_terms)
             return (
                 "# Role\n"
-                "あなたはテロップの最終チェック担当の熟練編集者です。\n"
-                "Pass 2で作成された字幕の行分割を確認し、問題があれば最小限の修正を行ってください。\n\n"
-                "# 検出された問題\n"
+                "あなたはプロの字幕校正者です。\n"
+                "以下の字幕行（SRT生成前の行情報）を校正してください。\n\n"
+                "# 校正ルール（重要）\n"
+                "1. 誤字・脱字を修正する\n"
+                "2. 固有名詞（人名・地名・組織名）は、必ずGlossaryの正しい表記に揃える\n"
+                "3. 政治関連用語（政党名・法案名・政策名など）は、一般に使われる公式表記に統一する\n"
+                "   - ただし確信がない場合は変更しない（誤修正を避ける）\n"
+                "4. from/to（範囲）は一切変更しない（タイムコードに影響するため）\n"
+                "5. 行の順序と行数を変更しない\n"
+                "6. 余計な説明は禁止。JSONのみを返す（コードフェンスも禁止）\n\n"
+                "# Glossary\n"
+                f"{glossary_text}\n\n"
+                "# 検出された問題（参考）\n"
                 f"{issue_text}\n\n"
-                "# 修正ルール\n"
-                "1. **極端に短い行（1〜4文字）**: 前行または次行と統合し、5文字以上に\n"
-                "2. **17文字を超える行**: 必ず前後の文脈を見て自然な分割位置を探し、再分割\n"
-                "3. **引用表現の分割「〜って言う/思う」**: 統合して1行に\n"
-                "4. **修正後も制約を厳守**: 5〜17文字の範囲内（超過は絶対NG）\n"
-                "5. **最小限の修正**: 問題のある行のみ修正（問題がない行は変更しない）\n"
-                "6. **禁止事項**: 要約・意訳・語句の追加削除は厳禁\n\n"
-                "# 重要\n"
-                "- 必ず1件以上の行を返してください（空配列は禁止）\n"
-                "- 単語の順序を変えない\n"
-                "- 問題がない行はそのまま返す（無理に変更しない）\n\n"
                 "# Input\n"
                 f"現在の行分割:\n{current_lines}\n\n"
                 "# Output\n"

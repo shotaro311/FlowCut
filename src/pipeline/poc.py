@@ -58,6 +58,7 @@ class PocRunOptions:
     rewrite: bool | None = None
     llm_temperature: float | None = None
     llm_timeout: float | None = None
+    glossary_terms: list[str] | None = None
     start_delay: float = 0.0
     enable_pass5: bool = False
     pass5_max_chars: int = 17
@@ -193,6 +194,7 @@ def execute_poc_run(
                         pass3_model=options.llm_pass3_model,
                         pass4_model=options.llm_pass4_model,
                         workflow=options.workflow,
+                        glossary_terms=options.glossary_terms,
                         run_id=run_id,
                         source_name=audio_path.name,
                         start_delay=options.start_delay,
