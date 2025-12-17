@@ -10,6 +10,7 @@ from typing import Callable, Iterable, List, Sequence, Dict, Any
 from dataclasses import dataclass
 
 from src.config.settings import get_settings
+from src.gui.config import get_config
 from src.llm.profiles import get_profile
 from src.pipeline import PocRunOptions, ensure_audio_files, execute_poc_run, resolve_models
 
@@ -48,10 +49,13 @@ class GuiController:
         subtitle_dir: Path | None = None,
         llm_provider: str | None = None,
         llm_profile: str | None = None,
+        workflow: str = "workflow1",
         pass1_model: str | None = None,
         pass2_model: str | None = None,
         pass3_model: str | None = None,
         pass4_model: str | None = None,
+        start_delay: float = 0.0,
+        keep_extracted_audio: bool = False,
         enable_pass5: bool = False,
         pass5_max_chars: int = 17,
         pass5_model: str | None = None,
@@ -91,10 +95,13 @@ class GuiController:
                         subtitle_dir=subtitle_dir,
                         llm_provider=llm_provider,
                         llm_profile=llm_profile,
+                        workflow=workflow,
                         pass1_model=pass1_model,
                         pass2_model=pass2_model,
                         pass3_model=pass3_model,
                         pass4_model=pass4_model,
+                        start_delay=start_delay,
+                        keep_extracted_audio=keep_extracted_audio,
                         enable_pass5=enable_pass5,
                         pass5_max_chars=pass5_max_chars,
                         pass5_model=pass5_model,
@@ -118,7 +125,7 @@ class GuiController:
                         model_slugs=model_slugs,
                         timestamp=options.timestamp,
                         total_elapsed_sec=total_elapsed_sec,
-                        metrics_root=self._resolve_metrics_root(options),
+                        metrics_root=self._resolve_metrics_root(options, audio_path),
                     )
                     if metrics is None:
                         metrics = {}
@@ -155,10 +162,13 @@ class GuiController:
         subtitle_dir: Path | None = None,
         llm_provider: str | None = None,
         llm_profile: str | None = None,
+        workflow: str = "workflow1",
         pass1_model: str | None = None,
         pass2_model: str | None = None,
         pass3_model: str | None = None,
         pass4_model: str | None = None,
+        start_delay: float = 0.0,
+        keep_extracted_audio: bool = False,
         enable_pass5: bool = False,
         pass5_max_chars: int = 17,
         pass5_model: str | None = None,
@@ -199,6 +209,8 @@ class GuiController:
         p3 = p3 or settings.llm.pass3_model
         p4 = p4 or settings.llm.pass4_model
 
+        glossary_terms = get_config().get_glossary_terms()
+
         return PocRunOptions(
             output_dir=Path("temp/poc_samples"),
             progress_dir=Path("temp/progress"),
@@ -206,11 +218,15 @@ class GuiController:
             simulate=False,
             llm_provider=provider,
             llm_profile=llm_profile,
+            workflow=workflow,
             llm_pass1_model=p1,
             llm_pass2_model=p2,
             llm_pass3_model=p3,
             llm_pass4_model=p4,
             llm_timeout=settings.llm.request_timeout,
+            glossary_terms=glossary_terms,
+            start_delay=float(start_delay),
+            keep_extracted_audio=bool(keep_extracted_audio),
             enable_pass5=bool(enable_pass5),
             pass5_max_chars=int(pass5_max_chars),
             pass5_model=pass5_model,
@@ -218,10 +234,21 @@ class GuiController:
             save_logs=save_logs,
         )
 
-    def _resolve_metrics_root(self, options: PocRunOptions) -> Path:
+    def _resolve_metrics_root(self, options: PocRunOptions, audio_path: Path) -> Path:
         """メトリクス（logs/metrics）の探索先を決定する。"""
         if options.save_logs:
-            return options.subtitle_dir / "logs" / "metrics"
+            base_dir = options.subtitle_dir / f"{audio_path.stem}_{options.timestamp}"
+            candidate = base_dir / "logs" / "metrics"
+            if candidate.exists():
+                return candidate
+
+            # まれにディレクトリ名が連番になるケースに備えてフォールバック
+            pattern = f"{audio_path.stem}_{options.timestamp}*"
+            for path in sorted(options.subtitle_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True):
+                metrics_root = path / "logs" / "metrics"
+                if metrics_root.exists():
+                    return metrics_root
+            return candidate
         return Path("logs/metrics")
 
     def _collect_output_paths(
@@ -259,6 +286,8 @@ class GuiController:
         """
         if not timestamp:
             return {
+                "total_prompt_tokens": 0,
+                "total_completion_tokens": 0,
                 "total_tokens": 0,
                 "total_cost_usd": 0.0,
                 "total_elapsed_sec": total_elapsed_sec,
@@ -269,6 +298,8 @@ class GuiController:
         root = metrics_root or Path("logs/metrics")
         if not root.exists():
             return {
+                "total_prompt_tokens": 0,
+                "total_completion_tokens": 0,
                 "total_tokens": 0,
                 "total_cost_usd": 0.0,
                 "total_elapsed_sec": total_elapsed_sec,
@@ -276,6 +307,8 @@ class GuiController:
                 "per_runner": {},
             }
 
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
         total_tokens = 0
         total_cost = 0.0
         metrics_files_found = 0
@@ -285,7 +318,7 @@ class GuiController:
         # {audio_file.name}_{date_str}_{run_id}_metrics.json
         for slug in model_slugs:
             run_id = f"{audio_path.stem}_{slug}_{timestamp}"
-            pattern = f"{audio_path.name}_*_{run_id}_metrics.json"
+            pattern = f"*_{run_id}_metrics.json"
             matched = sorted(root.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
             for path in matched[:1]:
                 try:
@@ -296,24 +329,37 @@ class GuiController:
                 stage_timings_time = data.get("stage_timings_time") or {}
                 llm_tokens = data.get("llm_tokens") or {}
                 pass_durations: dict = {}
+                pass_metrics: dict = {}
                 if isinstance(llm_tokens, dict):
-                    for entry in llm_tokens.values():
-                        if not isinstance(entry, dict):
-                            continue
-                        # total_tokens が欠ける/0 の場合は prompt+completion で代替する
-                        raw_total = entry.get("total_tokens")
-                        if isinstance(raw_total, (int, float)) and int(raw_total) > 0:
-                            total_tokens += int(raw_total)
-                        else:
-                            total_tokens += int(entry.get("prompt_tokens") or 0) + int(entry.get("completion_tokens") or 0)
-
-                    # duration_time を pass_label ごとに収集
                     for label, entry in llm_tokens.items():
                         if not isinstance(entry, dict):
                             continue
+                        prompt_tokens = int(entry.get("prompt_tokens") or 0)
+                        completion_tokens = int(entry.get("completion_tokens") or 0)
+                        raw_total = entry.get("total_tokens")
+                        if isinstance(raw_total, (int, float)) and int(raw_total) > 0:
+                            entry_total_tokens = int(raw_total)
+                        else:
+                            entry_total_tokens = prompt_tokens + completion_tokens
+
+                        total_prompt_tokens += prompt_tokens
+                        total_completion_tokens += completion_tokens
+                        total_tokens += entry_total_tokens
+
                         duration = entry.get("duration_time")
                         if isinstance(duration, str) and duration.strip():
                             pass_durations[str(label)] = duration.strip()
+
+                        pass_metrics[str(label)] = {
+                            "provider": entry.get("provider"),
+                            "model": entry.get("model"),
+                            "prompt_tokens": prompt_tokens,
+                            "completion_tokens": completion_tokens,
+                            "total_tokens": entry_total_tokens,
+                            "cost_total_usd": entry.get("cost_total_usd"),
+                            "cost_input_usd": entry.get("cost_input_usd"),
+                            "cost_output_usd": entry.get("cost_output_usd"),
+                        }
                 cost = data.get("run_total_cost_usd")
                 if isinstance(cost, (int, float)) and float(cost) > 0:
                     total_cost += float(cost)
@@ -335,9 +381,12 @@ class GuiController:
                     "transcribe_time": transcribe_time,
                     "llm_two_pass_time": llm_two_pass_time,
                     "pass_durations": pass_durations,
+                    "pass_metrics": pass_metrics,
                 }
 
         return {
+            "total_prompt_tokens": total_prompt_tokens,
+            "total_completion_tokens": total_completion_tokens,
             "total_tokens": total_tokens,
             "total_cost_usd": total_cost,
             "total_elapsed_sec": total_elapsed_sec,

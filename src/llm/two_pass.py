@@ -16,6 +16,7 @@ from src.llm.formatter import FormatterError, get_provider, FormatterRequest
 from src.llm.prompts import PromptPayload
 from src.transcribe.base import WordTimestamp
 from src.llm.usage_metrics import record_pass_time
+from src.utils.glossary import DEFAULT_GLOSSARY_TERMS, normalize_glossary_terms
 
 logger = logging.getLogger(__name__)
 RAW_LOG_DIR = Path("logs/llm_raw")
@@ -173,11 +174,19 @@ def _call_llm_with_parse(
                     exc,
                 )
                 continue
+
+            # リトライしない（or 最終試行）場合は、raw ログにエラー内容も残す。
+            err_text = f"[API ERROR] pass={pass_label} model={model_override or '-'}: {exc}\n"
+            if log_sink is not None:
+                log_sink._append_raw_log(pass_label, err_text)
+            else:
+                _log_raw_response(pass_label, err_text)
+
             # リトライ不可または最終試行で失敗
             if soft_fail:
                 logger.error("%s failed with non-retryable error: %s", pass_label, exc)
                 return None, None
-            raise
+            raise FormatterError(f"{pass_label} failed (model={model_override or '-'}): {exc}") from exc
 
         # ログ集約先があればそこへ、なければ旧方式で単発ログ
         if log_sink is not None:
@@ -193,7 +202,32 @@ def _call_llm_with_parse(
     if soft_fail:
         logger.error("%s parse failed after %d attempts; falling back", pass_label, retries)
         return None, None
-    raise last_exc  # type: ignore[misc]
+    raise FormatterError(f"{pass_label} parse failed (model={model_override or '-'}): {last_exc}") from last_exc  # type: ignore[misc]
+
+
+def _looks_like_context_limit_error(message: str) -> bool:
+    msg = message.lower()
+    return any(
+        token in msg
+        for token in [
+            "context length",
+            "maximum context",
+            "context_length_exceeded",
+            "too many tokens",
+            "token limit",
+            "prompt is too long",
+            "request too large",
+            "exceeds the maximum",
+            "max tokens",
+        ]
+    )
+
+
+def _looks_like_model_not_found_error(message: str) -> bool:
+    msg = message.lower()
+    if "model" not in msg:
+        return False
+    return any(token in msg for token in ["not found", "does not exist", "unknown model", "model_not_found"])
 
 
 def _has_full_word_coverage(lines: Sequence["LineRange"], words: Sequence[WordTimestamp]) -> bool:
@@ -218,6 +252,16 @@ def _has_full_word_coverage(lines: Sequence["LineRange"], words: Sequence[WordTi
     return all(covered)
 
 
+def _has_same_line_ranges(before: Sequence["LineRange"], after: Sequence["LineRange"]) -> bool:
+    """Return True if line ranges (from/to) are identical and in the same order."""
+    if len(before) != len(after):
+        return False
+    for b, a in zip(before, after):
+        if b.start_idx != a.start_idx or b.end_idx != a.end_idx:
+            return False
+    return True
+
+
 class TwoPassFormatter:
     """Run two LLM passes and produce SRT without anchor alignment."""
 
@@ -231,10 +275,15 @@ class TwoPassFormatter:
         pass3_model: str | None = None,
         pass4_model: str | None = None,
         workflow: str = "workflow1",
+        glossary_terms: Sequence[str] | None = None,
         *,
         run_id: str | None = None,
         source_name: str | None = None,
         raw_log_dir: Path | None = None,
+        fill_gaps: bool = True,
+        max_gap_duration: float | None = None,
+        gap_padding: float = 0.15,
+        start_delay: float = 0.0,
     ) -> None:
         settings = get_settings().llm
         self.provider_slug = llm_provider
@@ -250,6 +299,7 @@ class TwoPassFormatter:
             self.pass3_model = pass3_model or settings.wf2_pass3_model or settings.pass3_model
             # Pass4 は settings.wf2_pass4_model → settings.pass4_model の順に参照
             self.pass4_model = pass4_model or settings.wf2_pass4_model or settings.pass4_model
+            self._wf2_pass1_fallback_model = settings.pass1_model
         else:
             self.pass1_model = pass1_model or settings.pass1_model
             self.pass2_model = pass2_model or settings.pass2_model
@@ -257,6 +307,13 @@ class TwoPassFormatter:
             # Pass4 は settings.pass4_model（= LLM_PASS4_MODEL or LLM_PASS3_MODEL）を尊重しつつ、
             # プロファイルやCLIからの引数で上書きできるようにする。
             self.pass4_model = pass4_model or settings.pass4_model
+            self._wf2_pass1_fallback_model = None
+        # 辞書（Glossary）: None の場合はデフォルト辞書を利用する
+        self.glossary_terms = (
+            list(DEFAULT_GLOSSARY_TERMS)
+            if glossary_terms is None
+            else normalize_glossary_terms(glossary_terms)
+        )
         # ログ用コンテキスト（処理単位で1ファイルにまとめる）
         self.run_id = run_id
         self.source_name = source_name
@@ -264,6 +321,15 @@ class TwoPassFormatter:
         self._log_buffer: Dict[str, str] = {}
         self._log_date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
         self._log_written = False
+        # SRTギャップ埋め設定
+        # fill_gaps: True の場合、連続するセグメント間の空白時間を埋める
+        # max_gap_duration: 埋める最大ギャップ秒数。None の場合は上限なし
+        self.fill_gaps = fill_gaps
+        self.max_gap_duration = max_gap_duration
+        self.gap_padding = gap_padding
+        # テロップ開始時間遅延（秒）。2番目以降のセグメントのstartをこの秒数だけ遅らせる。
+        # 最初のセグメントのstartと最後のセグメントのendは維持される。
+        self.start_delay = start_delay
 
     # --- logging helpers -------------------------------------------------
 
@@ -346,15 +412,46 @@ class TwoPassFormatter:
             pass1_prompt = self._build_pass1_prompt(text, words)
             logger.debug("Calling LLM for Pass 1. Prompt length: %d", len(pass1_prompt))
             t_p1_start = time.perf_counter()
-            raw1, parsed1 = _call_llm_with_parse(
-                self._call_llm,
-                pass_label="pass1",
-                prompt=pass1_prompt,
-                model_override=self.pass1_model,
-                retries=2,
-                soft_fail=False,
-                log_sink=self,
-            )
+            try:
+                raw1, parsed1 = _call_llm_with_parse(
+                    self._call_llm,
+                    pass_label="pass1",
+                    prompt=pass1_prompt,
+                    model_override=self.pass1_model,
+                    retries=2,
+                    soft_fail=False,
+                    log_sink=self,
+                )
+            except FormatterError as exc:
+                fallback_model = self._wf2_pass1_fallback_model
+                if (
+                    self.workflow == "workflow2"
+                    and fallback_model
+                    and fallback_model != self.pass1_model
+                    and (
+                        _looks_like_context_limit_error(str(exc))
+                        or _looks_like_model_not_found_error(str(exc))
+                    )
+                ):
+                    logger.warning(
+                        "pass1 failed with model=%s; retrying with fallback model=%s: %s",
+                        self.pass1_model,
+                        fallback_model,
+                        exc,
+                    )
+                    if progress_callback:
+                        progress_callback("LLM Pass 1（フォールバック）", 45)
+                    raw1, parsed1 = _call_llm_with_parse(
+                        self._call_llm,
+                        pass_label="pass1",
+                        prompt=pass1_prompt,
+                        model_override=fallback_model,
+                        retries=1,
+                        soft_fail=False,
+                        log_sink=self,
+                    )
+                else:
+                    raise
             t_p1_end = time.perf_counter()
             record_pass_time(self.run_id, "pass1", t_p1_end - t_p1_start)
             ops = _parse_operations(parsed1)
@@ -385,6 +482,7 @@ class TwoPassFormatter:
             lines = _parse_lines(parsed2)
             if not lines:
                 raise FormatterError("行分割結果が空です")
+            pass2_lines = lines
 
             # Pass3: Validation (now always executed)
             from src.llm.validators import detect_issues
@@ -415,7 +513,12 @@ class TwoPassFormatter:
             if parsed3:
                 pass3_lines = _parse_lines(parsed3)
                 if pass3_lines and _has_full_word_coverage(pass3_lines, updated_words):
-                    lines = pass3_lines
+                    # workflow2では「タイムコード（= from/to）」を変えない方針のため、
+                    # Pass3が範囲を変更してきた場合は採用しない（text校正のみを許可）。
+                    if self.workflow == "workflow2" and not _has_same_line_ranges(pass2_lines, pass3_lines):
+                        logger.warning("Pass 3 changed line ranges in workflow2; using Pass 2 output instead")
+                    else:
+                        lines = pass3_lines
                 elif pass3_lines:
                     logger.warning(
                         "Pass 3 returned partial coverage (words=%d, lines=%d); using Pass 2 output instead",
@@ -487,11 +590,100 @@ class TwoPassFormatter:
             segments.append(SubtitleSegment(index=0, start=start, end=end, text=current_text))
             last_end_time = end
 
+        # セグメント間の「タイムコードの空白時間」を埋めるため、
+        # 次のセグメントの開始時刻まで前のセグメントの end を延長する。
+        if self.fill_gaps:
+            self._fill_segment_gaps(
+                segments,
+                max_gap=self.max_gap_duration,
+                gap_padding=self.gap_padding
+            )
+
+        # start_delay: 2番目以降のセグメントの開始時間を遅らせる
+        # 最初のセグメントのstartと最後のセグメントのendは維持
+        if self.start_delay > 0 and len(segments) > 1:
+            original_last_end = segments[-1].end
+
+            for i in range(1, len(segments)):
+                # 遅延を適用（ただし、次のセグメントの元startを超えないよう制限）
+                new_start = segments[i].start + self.start_delay
+                # オーバーラップ防止: 前のセグメントのendより後ろになるよう制限
+                if new_start < segments[i - 1].end:
+                    new_start = segments[i - 1].end
+                segments[i].start = new_start
+
+            # 遅延適用後、再度gap埋めを実行して隙間を埋める
+            if self.fill_gaps:
+                self._fill_segment_gaps(
+                    segments,
+                    max_gap=self.max_gap_duration,
+                    gap_padding=self.gap_padding
+                )
+
+            # 最後のセグメントのendを元の値に戻す
+            segments[-1].end = original_last_end
+
         # Re-assign indices
         for i, seg in enumerate(segments, start=1):
             seg.index = i
 
         return segments
+
+    def _fill_segment_gaps(
+        self,
+        segments: List["SubtitleSegment"],
+        max_gap: float | None = None,
+        gap_padding: float = 0.0,
+    ) -> None:
+        """
+        連続する SubtitleSegment 間に存在するタイムコードの空白時間を埋める。
+
+        具体的には、次のセグメントの start が現在の end より後ろにある場合、
+        現在の end を次の start まで延長し、画面上のテロップが途切れないようにする。
+
+        さらに gap_padding (秒) が指定されている場合、現在の end に余韻（パディング）を追加する。
+        ただし、パディング追加後の end が次の start を超えてしまう（オーバーラップする）場合は、
+        次の start で止める（次の字幕の開始時刻を優先し、遅らせない）。
+
+        Args:
+            segments: 対象の SubtitleSegment リスト（in-place で更新）
+            max_gap: 埋める最大ギャップ秒数。None の場合は上限なし（すべてのギャップを埋める）。
+                     例えば 10.0 を指定すると、10秒以上のギャップは埋めない。
+            gap_padding: 各セグメントの末尾に追加する余韻時間（秒）。デフォルト0.0。
+                         例えば 0.15 を指定すると、最低でも0.15秒の余韻を確保しようとする。
+                         （ただし次の字幕開始まで）
+        """
+        if not segments:
+            return
+
+        if not segments:
+            return
+
+        for i in range(len(segments) - 1):
+            current = segments[i]
+            nxt = segments[i + 1]
+
+            # ギャップがある場合 -> 埋めるかどうか判定
+            gap = nxt.start - current.end
+
+            if gap > 0:
+                # max_gap判定: ギャップが大きすぎる場合は完全に埋めない
+                if max_gap is not None and gap > max_gap:
+                    logger.debug(
+                        "Gap %.2fs exceeds max_gap %.2fs; not filling (segment %d)",
+                        gap,
+                        max_gap,
+                        i + 1,
+                    )
+                    # ただし、gap_padding 分だけは「余韻」として確保したい
+                    if gap_padding > 0:
+                        desired_end = current.end + gap_padding
+                        # ただし絶対に次の開始を超えてはいけない
+                        current.end = min(desired_end, nxt.start)
+                    continue
+
+                # ギャップが許容範囲内なら、次の開始位置まで完全に埋める（隙間ゼロ）
+                current.end = nxt.start
 
     def _ensure_trailing_coverage(
         self,
@@ -727,37 +919,35 @@ class TwoPassFormatter:
     def _build_pass3_prompt(self, lines: Sequence[LineRange], words: Sequence[WordTimestamp], issues) -> str:
         """Build Pass 3 prompt for fixing detected issues."""
         if self.workflow == "workflow2":
-            # indexed を使わない簡潔版
+            # workflow2: 校正（誤字脱字・固有名詞・政治用語）を優先
             if issues:
                 issue_text = "\n".join(
                     [f"- {issue.description} → {issue.suggested_action}" for issue in issues]
                 )
             else:
-                issue_text = (
-                    "問題は検出されませんでした。念のため全行を確認し、問題があれば最小限の修正を行ってください。"
-                )
+                issue_text = "（検出された問題はありません）"
             current_lines = json.dumps(
                 [{"from": l.start_idx, "to": l.end_idx, "text": l.text} for l in lines],
                 ensure_ascii=False,
                 indent=2,
             )
+            glossary_text = "\n".join(self.glossary_terms)
             return (
                 "# Role\n"
-                "あなたはテロップの最終チェック担当の熟練編集者です。\n"
-                "Pass 2で作成された字幕の行分割を確認し、問題があれば最小限の修正を行ってください。\n\n"
-                "# 検出された問題\n"
+                "あなたはプロの字幕校正者です。\n"
+                "以下の字幕行（SRT生成前の行情報）を校正してください。\n\n"
+                "# 校正ルール（重要）\n"
+                "1. 誤字・脱字を修正する\n"
+                "2. 固有名詞（人名・地名・組織名）は、必ずGlossaryの正しい表記に揃える\n"
+                "3. 政治関連用語（政党名・法案名・政策名など）は、一般に使われる公式表記に統一する\n"
+                "   - ただし確信がない場合は変更しない（誤修正を避ける）\n"
+                "4. from/to（範囲）は一切変更しない（タイムコードに影響するため）\n"
+                "5. 行の順序と行数を変更しない\n"
+                "6. 余計な説明は禁止。JSONのみを返す（コードフェンスも禁止）\n\n"
+                "# Glossary\n"
+                f"{glossary_text}\n\n"
+                "# 検出された問題（参考）\n"
                 f"{issue_text}\n\n"
-                "# 修正ルール\n"
-                "1. **極端に短い行（1〜4文字）**: 前行または次行と統合し、5文字以上に\n"
-                "2. **17文字を超える行**: 必ず前後の文脈を見て自然な分割位置を探し、再分割\n"
-                "3. **引用表現の分割「〜って言う/思う」**: 統合して1行に\n"
-                "4. **修正後も制約を厳守**: 5〜17文字の範囲内（超過は絶対NG）\n"
-                "5. **最小限の修正**: 問題のある行のみ修正（問題がない行は変更しない）\n"
-                "6. **禁止事項**: 要約・意訳・語句の追加削除は厳禁\n\n"
-                "# 重要\n"
-                "- 必ず1件以上の行を返してください（空配列は禁止）\n"
-                "- 単語の順序を変えない\n"
-                "- 問題がない行はそのまま返す（無理に変更しない）\n\n"
                 "# Input\n"
                 f"現在の行分割:\n{current_lines}\n\n"
                 "# Output\n"

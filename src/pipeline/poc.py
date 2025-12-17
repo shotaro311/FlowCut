@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple, Callable
 import sys
 import time
 
-from src.llm.two_pass import TwoPassFormatter, TwoPassResult
+from src.llm.two_pass import TwoPassResult
 from src.llm.formatter import FormatterError
 from src.transcribe import (
     TranscriptionConfig,
@@ -26,6 +26,13 @@ from src.utils.progress import (
     mark_block_completed,
     mark_run_status,
     save_progress,
+)
+from src.utils.paths import generate_sequential_path
+from src.utils.audio_extractor import (
+    is_video_file,
+    extract_audio_from_video,
+    cleanup_extracted_audio,
+    AudioExtractionError,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,6 +59,9 @@ class PocRunOptions:
     rewrite: bool | None = None
     llm_temperature: float | None = None
     llm_timeout: float | None = None
+    glossary_terms: list[str] | None = None
+    start_delay: float = 0.0
+    keep_extracted_audio: bool = False
     enable_pass5: bool = False
     pass5_max_chars: int = 17
     pass5_model: str | None = None
@@ -109,16 +119,18 @@ def execute_poc_run(
 
     timestamp = options.normalized_timestamp()
     saved_paths: List[Path] = []
-    logs_root: Path | None = None
     json_output_dir = options.output_dir
     progress_dir = options.progress_dir
     metrics_output_dir: Path | None = None
     raw_llm_log_dir: Path | None = None
     enforce_file_limits = True
+    run_output_dir: Path | None = None
 
     if options.save_logs:
-        # 出力先（subtitle_dir）直下へ logs/ を作り、必要な成果物をまとめる
-        logs_root = options.subtitle_dir / "logs"
+        # 1回の実行ごとにフォルダを作り、SRTと logs/ をまとめて保存する
+        run_base_dir = options.subtitle_dir / f"{audio_files[0].stem}_{timestamp}"
+        run_output_dir = generate_sequential_path(run_base_dir)
+        logs_root = run_output_dir / "logs"
         json_output_dir = logs_root / "poc_samples"
         progress_dir = logs_root / "progress"
         metrics_output_dir = logs_root / "metrics"
@@ -135,7 +147,25 @@ def execute_poc_run(
         )
         logger.info("=== %s (%s) ===", slug, runner.display_name)
         runner.prepare(config)
-        for audio_path in audio_files:
+        for input_path in audio_files:
+            # 動画ファイルの場合は音声を抽出
+            extracted_audio_path: Path | None = None
+            if is_video_file(input_path):
+                if options.progress_callback:
+                    options.progress_callback("動画から音声抽出中", 5)
+                logger.info("動画ファイルを検出: %s", input_path.name)
+                try:
+                    extracted_audio_path = extract_audio_from_video(input_path)
+                    audio_path = extracted_audio_path
+                    # 元の動画ファイル名を保持（SRTファイル名に使用）
+                    original_stem = input_path.stem
+                except AudioExtractionError as exc:
+                    logger.error("音声抽出に失敗しました: %s", exc)
+                    raise
+            else:
+                audio_path = input_path
+                original_stem = input_path.stem
+            
             # Phase 1: Whisper transcription
             if options.progress_callback:
                 options.progress_callback("Whisper文字起こし", 20)
@@ -150,7 +180,8 @@ def execute_poc_run(
                 t_transcribe_end - t_transcribe_start,
             )
             blocks = build_single_block(result)
-            run_id = f"{audio_path.stem}_{slug}_{timestamp}"
+            # run_idは元のファイル名（動画の場合は動画名）をベースにする
+            run_id = f"{original_stem}_{slug}_{timestamp}"
             output_path = json_output_dir / f"{run_id}.json"
             save_result(
                 result,
@@ -162,39 +193,59 @@ def execute_poc_run(
 
             subtitle_path: Path | None = None
             if options.llm_provider:
-                subtitle_path = options.subtitle_dir / f"{run_id}.srt"
+                # 希望ファイル名 {run_id}.srt をベースに、
+                # 既存ファイルがある場合は audio (1).srt 形式の
+                # 連番サフィックス付きファイル名を採用する
+                subtitle_base_dir = run_output_dir or options.subtitle_dir
+                desired_subtitle_path = subtitle_base_dir / f"{run_id}.srt"
+                subtitle_path = generate_sequential_path(desired_subtitle_path)
                 subtitle_text: str | None = None
                 if not result.words:
                     logger.warning("wordタイムスタンプが空のためSRT生成をスキップします: %s", run_id)
                 else:
-                    two_pass = TwoPassFormatter(
-                        llm_provider=options.llm_provider,
-                        temperature=options.llm_temperature,
-                        timeout=options.llm_timeout,
-                        pass1_model=options.llm_pass1_model,
-                        pass2_model=options.llm_pass2_model,
-                        pass3_model=options.llm_pass3_model,
-                        pass4_model=options.llm_pass4_model,
-                        workflow=options.workflow,
-                        run_id=run_id,
-                        source_name=audio_path.name,
-                        raw_log_dir=raw_llm_log_dir,
-                    )
+
+                    def _build_formatter(workflow: str):
+                        if workflow == "workflow2":
+                            try:
+                                from src.llm.two_pass_optimized import TwoPassFormatter as Formatter
+                                logger.info("Using Optimized TwoPassFormatter (workflow2)")
+                            except ImportError:
+                                logger.warning(
+                                    "src.llm.two_pass_optimized not found; falling back to standard TwoPassFormatter"
+                                )
+                                from src.llm.two_pass import TwoPassFormatter as Formatter
+                        else:
+                            from src.llm.two_pass import TwoPassFormatter as Formatter
+
+                        return Formatter(
+                            llm_provider=options.llm_provider,
+                            temperature=options.llm_temperature,
+                            timeout=options.llm_timeout,
+                            pass1_model=options.llm_pass1_model,
+                            pass2_model=options.llm_pass2_model,
+                            pass3_model=options.llm_pass3_model,
+                            pass4_model=options.llm_pass4_model,
+                            workflow=workflow,
+                            glossary_terms=options.glossary_terms,
+                            run_id=run_id,
+                            source_name=input_path.name,
+                            start_delay=options.start_delay,
+                            raw_log_dir=raw_llm_log_dir,
+                        )
+
+                    two_pass = _build_formatter(options.workflow)
                     # Phase 2-5: LLM passes
                     t_llm_start = time.perf_counter()
-                    try:
-                        if options.progress_callback:
-                            options.progress_callback("LLM Pass 1", 40)
-                        tp_result: TwoPassResult | None = two_pass.run(
-                            text=result.text,
-                            words=result.words or [],
-                            max_chars=17.0,
-                            progress_callback=options.progress_callback,
-                        )
-                        if tp_result:
-                            subtitle_text = tp_result.srt_text
-                    except FormatterError as exc:
-                        logger.warning("二段階LLM整形に失敗しました: %s", exc)
+                    if options.progress_callback:
+                        options.progress_callback("LLM Pass 1", 40)
+                    tp_result: TwoPassResult | None = two_pass.run(
+                        text=result.text,
+                        words=result.words or [],
+                        max_chars=17.0,
+                        progress_callback=options.progress_callback,
+                    )
+                    if tp_result:
+                        subtitle_text = tp_result.srt_text
                     t_llm_end = time.perf_counter()
                     logger.info(
                         "llm_two_pass_done provider=%s audio=%s duration_sec=%.3f",
@@ -202,7 +253,6 @@ def execute_poc_run(
                         audio_path.name,
                         t_llm_end - t_llm_start,
                     )
-
                     if options.enable_pass5 and subtitle_text:
                         try:
                             from src.llm.pass5_processor import Pass5Processor
@@ -215,19 +265,25 @@ def execute_poc_run(
                                 max_chars=options.pass5_max_chars,
                                 model_override=model_override,
                                 run_id=run_id,
-                                source_name=audio_path.name,
+                                source_name=input_path.name,
                                 temperature=options.llm_temperature,
                                 timeout=options.llm_timeout,
                             ).process(subtitle_text)
                         except Exception as exc:
                             logger.warning("Pass5処理に失敗しました: %s", exc)
 
-                if subtitle_text:
+                if subtitle_text is not None:
                     subtitle_path.parent.mkdir(parents=True, exist_ok=True)
                     subtitle_path.write_text(subtitle_text, encoding="utf-8")
                     logger.info("SRTを保存しました: %s", subtitle_path)
                     saved_paths.append(subtitle_path)
 
+            # 処理時間を計算（save_progress_snapshot呼び出し前に計算）
+            t_run_end_for_progress = time.perf_counter()
+            transcribe_sec = t_transcribe_end - t_transcribe_start
+            llm_two_pass_sec = (t_llm_end - t_llm_start) if options.llm_provider and result.words else 0.0
+            total_elapsed_sec = t_run_end_for_progress - t_run_start
+            
             save_progress_snapshot(
                 run_id=run_id,
                 audio_path=audio_path,
@@ -239,6 +295,11 @@ def execute_poc_run(
                     result.metadata,
                     timestamp,
                     subtitle_path=subtitle_path,
+                    total_elapsed_sec=total_elapsed_sec,
+                    stage_timings_sec={
+                        "transcribe_sec": transcribe_sec,
+                        "llm_two_pass_sec": llm_two_pass_sec,
+                    },
                 ),
                 llm_provider=options.llm_provider,
                 enforce_file_limit=enforce_file_limits,
@@ -264,7 +325,7 @@ def execute_poc_run(
                     total_elapsed = t_run_end - t_run_start
                     write_run_metrics_file(
                         run_id=run_id,
-                        source_name=audio_path.name,
+                        source_name=input_path.name,
                         runner_slug=slug,
                         timestamp=timestamp,
                         stage_timings_sec=stage_timings,
@@ -278,6 +339,9 @@ def execute_poc_run(
             # Mark completion
             if options.progress_callback:
                 options.progress_callback("完了", 100)
+
+            if extracted_audio_path and not options.keep_extracted_audio:
+                cleanup_extracted_audio(extracted_audio_path)
     return saved_paths
 
 
@@ -364,6 +428,11 @@ def prepare_resume_run(
     audio_files = ensure_audio_files([Path(record.audio_file)])
     timestamp = _extract_timestamp(record)
     option_meta = (record.metadata or {}).get("options", {})
+    raw_start_delay = option_meta.get("start_delay", base_options.start_delay)
+    try:
+        start_delay = float(raw_start_delay)
+    except (TypeError, ValueError):
+        start_delay = float(base_options.start_delay)
     resume_options = PocRunOptions(
         language=base_options.language or option_meta.get("language"),
         chunk_size=(
@@ -397,6 +466,10 @@ def prepare_resume_run(
         llm_timeout=(
             base_options.llm_timeout if base_options.llm_timeout is not None else option_meta.get("llm_timeout")
         ),
+        glossary_terms=option_meta.get("glossary_terms"),
+        start_delay=start_delay,
+        keep_extracted_audio=bool(option_meta.get("keep_extracted_audio", base_options.keep_extracted_audio)),
+        save_logs=bool(option_meta.get("save_logs", base_options.save_logs)),
         enable_pass5=option_meta.get("enable_pass5", base_options.enable_pass5),
         pass5_max_chars=option_meta.get("pass5_max_chars", base_options.pass5_max_chars),
         pass5_model=option_meta.get("pass5_model"),
@@ -466,12 +539,29 @@ def _extract_timestamp(record: ProgressRecord) -> str | None:
     return None
 
 
+def _format_seconds(secs: float) -> str:
+    """人が読みやすい `Xm Y.YYs` 形式に変換する."""
+    try:
+        value = float(secs)
+    except (TypeError, ValueError):
+        return "0.00s"
+    if value < 0:
+        value = 0.0
+    minutes = int(value // 60)
+    seconds = value - minutes * 60
+    if minutes > 0:
+        return f"{minutes}m {seconds:.2f}s"
+    return f"{seconds:.2f}s"
+
+
 def _build_progress_metadata(
     options: PocRunOptions,
     base_metadata: Dict[str, Any],
     timestamp: str,
     *,
     subtitle_path: Path | None = None,
+    total_elapsed_sec: float | None = None,
+    stage_timings_sec: Dict[str, float] | None = None,
 ) -> Dict[str, Any]:
     metadata: Dict[str, Any] = dict(base_metadata or {})
     metadata.setdefault("requested_at", timestamp)
@@ -489,6 +579,10 @@ def _build_progress_metadata(
         "rewrite": options.rewrite,
         "llm_temperature": options.llm_temperature,
         "llm_timeout": options.llm_timeout,
+        "glossary_terms": options.glossary_terms,
+        "start_delay": options.start_delay,
+        "keep_extracted_audio": options.keep_extracted_audio,
+        "save_logs": options.save_logs,
         "enable_pass5": options.enable_pass5,
         "pass5_max_chars": options.pass5_max_chars,
         "pass5_model": options.pass5_model,
@@ -497,6 +591,13 @@ def _build_progress_metadata(
         metadata["resume_source"] = str(options.resume_source)
     if subtitle_path:
         metadata["subtitle_path"] = str(subtitle_path)
+    # 処理時間情報を追加
+    if total_elapsed_sec is not None:
+        metadata["total_elapsed_sec"] = round(total_elapsed_sec, 2)
+        metadata["total_elapsed_time"] = _format_seconds(total_elapsed_sec)
+    if stage_timings_sec:
+        metadata["stage_timings_sec"] = {k: round(v, 2) for k, v in stage_timings_sec.items()}
+        metadata["stage_timings_time"] = {k: _format_seconds(v) for k, v in stage_timings_sec.items()}
     return metadata
 
 

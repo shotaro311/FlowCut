@@ -30,7 +30,8 @@
 ※ **三段階LLMワークフロー（Three-Pass）** を採用し、全文をLLMに渡して意味的改行および最終検証を実施。
   - **Pass 1**: テキストクリーニング（削除・置換のみ）
   - **Pass 2**: 17文字行分割（自然な改行位置を決定）
-  - **Pass 3**: 品質検証（Python検出器 + LLM修正、問題なし時はスキップ）
+  - **Pass 3**: 品質検証＋校正（Python検出器 + LLM校正、原則として常時実行）
+  - **Pass 4**: 長さ違反行（5文字未満/17文字超）の再分割（違反行のみ）
   - **ブロック分割は廃止**: 旧BlockSplitterは撤去し、全文を一括で処理する。長尺対応は再開機構（`--resume`）とFuzzyアライメントで担保。
 
 *   **Google** (gemini-3-pro-preview / gemini-2.5-flash) ←推奨
@@ -128,9 +129,12 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
     *   openai-whisper（公式 Whisper large-v3 ローカル/API 実装）
 *   競合が発生した場合のみ環境分離を検討
 
-### GUI（フェーズ4で実装）
-*   **フェーズ1:** GUIなし（Pythonスクリプトのみ）
-*   **フェーズ4:** 簡易GUI（Tkinter または Flet）を想定（Planに合わせて後ろ倒し）
+### GUI（実装済み）
+*   Tkinter GUI を実装済み（`src/gui/**`）。
+*   GUI では以下を設定できる：
+    *   **API設定**（Google/OpenAI/Anthropic の API キー）
+    *   **辞書（Glossary）**（固有名詞の正しい表記リスト。1行=1用語で編集）
+*   設定は `~/.flowcut/config.json` に保存される（機密値はローカル保存のみ）。
 *   **将来的な選択肢:** Tauri + React（モダンなUI）
 
 ## 3. 処理フロー（内部ロジック）
@@ -150,7 +154,10 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
     - **パス2 (Line Splitting):** 17文字分割のみを決める。行範囲をインデックスで返す。  
     - **時間計算:** ローカルで行い、Whisperのwordタイムスタンプを維持する（尺伸び防止）。  
     - **タイムスタンプ補正 (Clamping):** LLMのインデックス指定ミスによる時間の巻き戻りを検知し、強制的に時系列順に補正する。  
-    - **最小行長/Pass3:** 行は原則5〜17文字。問題がなくても Pass3 で最終確認し、短行は統合する。  
+    - **Pass3（検証＋校正）:** 問題がなくても最終確認のため実行する。  
+        - workflow1: 短行（1〜4文字）や引用分割の修正を行う（必要に応じて行範囲を調整）。  
+        - workflow2: 誤字脱字修正・辞書（Glossary）に基づく固有名詞統一・政治関連用語の表記統一を行う（原則として行範囲は変更しない）。  
+    - **workflow2のPass1モデルフォールバック:** workflow2のPass1が **モデル不正** または **コンテキスト上限超過** で失敗した場合は、Pass1のみ `LLM_PASS1_MODEL` で再試行する（ワークフローは workflow2 のまま）。
     - **Pass4（長さ違反行のみ再LLM）:** Pass3後に5文字未満/17文字超の行だけを再度LLMにかけ直す。出力が空/不正の場合は元行を維持し、Pass4 の段階で出力された `lines` をそのまま採用する（Pass4 後にローカルでの強制再分割は行わない）。  
     - **末尾カバレッジ保証（プロバイダ差異の吸収）:** 一部プロバイダ（特に OpenAI）では、Pass2/Pass3 の `lines` が先頭側に偏り、末尾の単語に対応する行が生成されないケースがある。この場合は TwoPassFormatter 内のフォールバック（`_ensure_trailing_coverage`）により、未カバーの単語から簡易な行を自動生成し、**常に文字起こし全文がSRTに反映される**ようにする。
     - **Pass5（オプション）:** SRT生成後の後処理として、指定文字数を超える長行のみLLMで改行する（タイムコードは変更しない）。
@@ -173,7 +180,7 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
     *   例: `python -m src.cli.main run input.wav --resume temp/progress_20250120_103000.json`
 *   **ログ記録:**
     *   `logs/processing.log` に処理状況を記録（TODO: 現状は標準出力中心）
-    *   LLM生応答は `logs/llm_raw/` に **1 run（音声×モデル）につき1ファイル** として集約保存（Pass1〜Pass4の生JSONをパスごとセクションにまとめる）
+    *   LLM生応答は `logs/llm_raw/` に **1 run（音声×モデル）につき1ファイル** として集約保存（Pass1〜Pass4の生JSONをパスごとセクションにまとめる）。APIエラーなど **応答が返らない失敗** でも、エラー内容を同ファイルに記録する。
     *   LLM使用量・時間と概算コストは `logs/metrics/{音声ファイル名}_{日付}_{run_id}_metrics.json` に保存し、以下をJSONで持つ:
         *   全体の経過時間（人間が読みやすい形式の `total_elapsed_time`。例: `8m 22.35s`）
         *   transcribe / two-pass 各工程の所要時間（`stage_timings_time`。例: `"transcribe_sec": "1m 28.12s"`）
@@ -182,7 +189,7 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
         *   Pass4 のトークン数・処理時間（複数回呼び出し分を合計）、および `provider` / `model`
         *   Pass5 のトークン数・処理時間（有効時のみ）
         *   プロバイダー/モデルごとの 1M トークン単価（`config/llm_pricing.json`）を用いて算出した概算コスト（Pass単位の `cost_input_usd` / `cost_output_usd` / `cost_total_usd` と、run全体の `run_total_cost_usd`）
-    *   GUIの「ログ保存」をONにした場合は、SRT出力先（`subtitle_dir`）配下の `logs/` にログ一式をまとめて保存する（デバッグ用）
+    *   GUIの「ログ保存」をONにした場合は、SRT出力先（`subtitle_dir`）配下に `{入力ファイル名(拡張子なし)}_{timestamp}/` を作成し、その中に `{run_id}.srt` と `logs/` をまとめて保存する（デバッグ用）
 
 ### Step 3: タイムスタンプ再計算 (Local)
 
@@ -205,6 +212,7 @@ Pass2 の `lines` で示されたインデックス範囲を word-level タイ�
 
 ### Step 4: SRT出力
 *   決定したタイムコードとテキストをSRT形式でファイルに書き出す。
+*   セグメント間にタイムコードの空白（ギャップ）がある場合は、前の行の終了時刻を次の行の開始まで延長し、字幕表示が途切れないようにする。
 *   **SRTフォーマット:**
     ```
     1
@@ -222,7 +230,7 @@ python -m src.cli.main run <音声ファイル> [オプション]
 ```
 
 #### 主なオプション（実装に合わせて更新）
-- `--models kotoba,mlx` : 使用するランナーをカンマ区切り指定。未指定なら **MLX large-v3のみ** 実行。
+- `--models mlx,openai` : 使用するランナーをカンマ区切り指定。未指定なら **プラットフォーム別デフォルト**（macOS: `mlx` / それ以外: `openai`）を実行。
 - `--llm {google|openai|anthropic}` : LLM整形プロバイダー。**未指定なら整形・SRT出力を行わず、文字起こしJSONのみ保存**（Plan推奨は google）。
 - `--rewrite / --no-rewrite` : 語尾リライトを有効化（デフォルトNoneでプロバイダー既定に従う）。
 - （二段階LLMはデフォルトで常時有効。切替オプションなし）
@@ -233,8 +241,9 @@ python -m src.cli.main run <音声ファイル> [オプション]
 
 #### 出力パス
 - 音声×モデル×実行時刻ごとに `temp/poc_samples/{run_id}.json` を保存（内部的に **最大5件まで** を保持し、古いJSONから自動削除してディスク肥大化を防ぐ）。
-- LLM整形を実行した場合のみ `{subtitle_dir}/{run_id}.srt` を自動命名で保存（`subtitle_dir` のデフォルトは `output/`、`--subtitle-dir` で変更可能）。
-- GUIの「ログ保存」をONにした場合は `{subtitle_dir}/logs/` 配下に `poc_samples/`, `progress/`, `metrics/`, `llm_raw/` を保存（ファイル数上限なし）。
+- LLM整形を実行した場合のみ `{subtitle_dir}/{run_id}.srt` を自動命名で保存（`subtitle_dir` のデフォルトは `output/`、`--subtitle-dir` で変更可能）。  
+  - 既に同名の `*.srt` が存在する場合は、OSやクラウドストレージと同様に `name.srt`, `name (1).srt`, `name (2).srt` ... のように **連番サフィックスを付与** して保存し、既存ファイルを上書きしない。
+- GUIの「ログ保存」をONにした場合は `{subtitle_dir}/{入力ファイル名(拡張子なし)}_{timestamp}/` を作成し、配下に `{run_id}.srt` と `logs/poc_samples/`, `logs/progress/`, `logs/metrics/`, `logs/llm_raw/` を保存（ファイル数上限なし）。
 
 #### 実行例
 ```bash
@@ -255,7 +264,8 @@ python -m src.cli.main run samples/sample_audio.m4a --llm anthropic --rewrite
 *   tqdmなどでプログレスバー表示
 
 #### 出力
-*   LLM整形を実行した場合のみ `output/{音声名}_{モデル}_{日時}.srt` を自動保存（--outputオプションなし）
+*   LLM整形を実行した場合のみ `output/{run_id}.srt` を自動保存（--outputオプションなし）。  
+    * `run_id = {音声名}_{モデル}_{日時}` をベースとし、出力先に同名ファイルが既にある場合は `name.srt`, `name (1).srt`, `name (2).srt` ... という形式で **連番サフィックス付きのファイル名** を採用する（ユーザーに優しい挙動を優先）。
 *   文字起こしJSONは `temp/poc_samples/{run_id}.json` に保存されるが、最大5件までを保持し、古いファイルから自動削除される
 
 ### フェーズ4: GUIアプリ（将来実装｜Plan準拠）
@@ -278,10 +288,12 @@ python -m src.cli.main run samples/sample_audio.m4a --llm anthropic --rewrite
     *   [ ] **語尾調整・リライトを行う**（デフォルトOFF：原文維持＋フィラー削除のみ）
     *   [ ] **高精度モード**（large-v3モデル使用。OFFの場合はmediumモデルで高速化）
 *   **出力:**
-    *   デフォルトでは `output/` ディレクトリに `filename_model_timestamp.srt` を保存（CLIと共通）。
+    *   デフォルトでは `output/` ディレクトリに `{run_id}.srt` を保存（CLIと共通）。  
+        * 既に同名ファイルが存在する場合は `name.srt`, `name (1).srt`, `name (2).srt` ... のように **連番サフィックスを付けて保存** し、既存ファイルを保持する。
     *   GUI からは「保存先フォルダを選択」ボタンで任意のディレクトリを指定できる。
+    *   完了後、出力欄の「開く」ボタンから出力フォルダを開ける。
     *   完了時に通知を表示し、GUI下部に「総トークン数」「概算APIコスト（USD、小数点第3位まで）」「総処理時間（待機含む）」を表示する。
-        *   追加で、待機時間 / 実処理時間 と、パス別処理時間（Pass1〜Pass4、Pass5は有効時のみ）を表示する。
+        *   追加で、待機時間 / 実処理時間 と、パス別の処理時間・トークン数（prompt / completion / total）・概算コスト（USD、Pass5は有効時のみ）を表示する。
 
 #### 将来のWebアプリ版について（メモ）
 - 本要件定義のMVPでは「ローカル実行できるGUI（Tkinter / Flet想定）」を優先し、ブラウザ上で動くWebアプリ版は**別フェーズ**で検討する。  

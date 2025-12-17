@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -30,24 +32,29 @@ class WorkflowPanel(ttk.Frame):
         self.config = get_config()
         
         # UI変数
-        self.file_var = tk.StringVar(value="音声ファイル: 未選択")
+        self.file_var = tk.StringVar(value="メディア: 未選択")
         self.output_dir_var = tk.StringVar(value="保存先フォルダ: output/ （デフォルト）")
         self.output_var = tk.StringVar(value="")
         self.metrics_var = tk.StringVar(value="")
         self.phase_var = tk.StringVar(value="")
         self.base_phase_var = tk.StringVar(value="")
+        self._last_output_dir: Path | None = None
         self.rolling_dots = 0
         self.rolling_timer_id = None
         
         # LLM関連変数
         self.llm_provider_var = tk.StringVar()
         self.llm_profile_var = tk.StringVar()
+        self.workflow_var = tk.StringVar(value="workflow1")
         self.pass1_model_var = tk.StringVar()
         self.pass2_model_var = tk.StringVar()
         self.pass3_model_var = tk.StringVar()
         self.pass4_model_var = tk.StringVar()
+        self.start_delay_var = tk.StringVar(value="0.0")
         self.advanced_visible = tk.BooleanVar(value=False)
         self.save_logs_var = tk.BooleanVar(value=False)
+        self.keep_extracted_audio_var = tk.BooleanVar(value=False)
+        self.notify_on_complete_var = tk.BooleanVar(value=False)
         self.pass5_enabled_var = tk.BooleanVar(value=False)
         self.pass5_max_chars_var = tk.StringVar(value="17")
         self.pass5_model_var = tk.StringVar()
@@ -128,6 +135,21 @@ class WorkflowPanel(ttk.Frame):
         profile_combo.pack(side=tk.LEFT, padx=(4, 0))
         profile_combo.bind("<<ComboboxSelected>>", self._on_profile_changed)
         
+        # ワークフロー選択
+        workflow_row = ttk.Frame(options_frame)
+        workflow_row.pack(fill=tk.X, pady=(2, 2))
+        ttk.Label(workflow_row, text="ワークフロー:").pack(side=tk.LEFT)
+        workflow_combo = ttk.Combobox(
+            workflow_row,
+            textvariable=self.workflow_var,
+            values=["workflow1", "workflow2"],
+            state="readonly",
+            width=16,
+        )
+        workflow_combo.pack(side=tk.LEFT, padx=(4, 0))
+        workflow_combo.bind("<<ComboboxSelected>>", self._on_workflow_changed)
+        ttk.Label(workflow_row, text="workflow2: 最適化版", foreground="#888888").pack(side=tk.LEFT, padx=(8, 0))
+        
         # 詳細設定トグル
         advanced_row = ttk.Frame(options_frame)
         advanced_row.pack(fill=tk.X, pady=(2, 2))
@@ -144,6 +166,7 @@ class WorkflowPanel(ttk.Frame):
             advanced_row,
             text="ログ保存",
             variable=self.save_logs_var,
+            command=self._on_save_logs_changed,
         )
         save_logs_check.pack(side=tk.LEFT, padx=(12, 0))
 
@@ -154,6 +177,22 @@ class WorkflowPanel(ttk.Frame):
             command=self._toggle_pass5,
         )
         pass5_check.pack(side=tk.LEFT, padx=(12, 0))
+
+        keep_audio_check = ttk.Checkbutton(
+            advanced_row,
+            text="抽出音声を保存",
+            variable=self.keep_extracted_audio_var,
+            command=self._on_keep_extracted_audio_changed,
+        )
+        keep_audio_check.pack(side=tk.LEFT, padx=(12, 0))
+
+        notify_check = ttk.Checkbutton(
+            advanced_row,
+            text="完了通知",
+            variable=self.notify_on_complete_var,
+            command=self._on_notify_on_complete_changed,
+        )
+        notify_check.pack(side=tk.LEFT, padx=(12, 0))
         
         # 詳細設定エリア
         self.advanced_frame = ttk.Frame(options_frame)
@@ -174,6 +213,18 @@ class WorkflowPanel(ttk.Frame):
             )
             combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
             self._pass_model_combos.append(combo)
+
+        delay_row = ttk.Frame(self.advanced_frame)
+        delay_row.pack(fill=tk.X, pady=(2, 2))
+        ttk.Label(delay_row, text="開始遅延:", width=8).pack(side=tk.LEFT)
+        delay_entry = ttk.Entry(
+            delay_row,
+            textvariable=self.start_delay_var,
+            width=6,
+        )
+        delay_entry.pack(side=tk.LEFT, padx=(0, 4))
+        delay_entry.bind("<FocusOut>", self._on_start_delay_changed)
+        ttk.Label(delay_row, text="秒（例: 0.2）", foreground="#888888").pack(side=tk.LEFT)
 
         # Pass5 設定
         self.pass5_frame = ttk.Frame(options_frame)
@@ -213,9 +264,19 @@ class WorkflowPanel(ttk.Frame):
         ttk.Label(status_row, textvariable=self.phase_var).pack(side=tk.LEFT, padx=(4, 0))
         
         # 出力とメトリクス表示
-        self.output_label = ttk.Label(self, textvariable=self.output_var)
-        self.output_label.pack(fill=tk.X, pady=(0, 2))
-        
+        output_row = ttk.Frame(self)
+        output_row.pack(fill=tk.X, pady=(0, 2))
+        self.output_label = ttk.Label(output_row, textvariable=self.output_var, anchor=tk.W)
+        self.output_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.open_output_button = ttk.Button(
+            output_row,
+            text="開く",
+            command=self._open_output_folder,
+            state=tk.DISABLED,
+            width=6,
+        )
+        self.open_output_button.pack(side=tk.RIGHT, padx=(8, 0))
+
         self.metrics_label = ttk.Label(self, textvariable=self.metrics_var)
         self.metrics_label.pack(fill=tk.X)
 
@@ -251,12 +312,22 @@ class WorkflowPanel(ttk.Frame):
         """初期設定を読み込む。"""
         # プロファイル設定
         if self._profiles:
-            initial_profile = "default" if "default" in self._profiles else sorted(self._profiles.keys())[0]
+            saved_profile = self.config.get_llm_profile()
+            if saved_profile and saved_profile in self._profiles:
+                initial_profile = saved_profile
+            else:
+                initial_profile = "default" if "default" in self._profiles else sorted(self._profiles.keys())[0]
             self.llm_profile_var.set(initial_profile)
             self.llm_provider_var.set(self._profiles[initial_profile].provider or "google")
             self._apply_profile_to_pass_models(initial_profile)
         else:
             self.llm_provider_var.set("google")
+
+        self.workflow_var.set(self.config.get_workflow())
+        self.start_delay_var.set(str(self.config.get_start_delay()))
+        self.save_logs_var.set(bool(self.config.get_save_logs()))
+        self.keep_extracted_audio_var.set(bool(self.config.get_keep_extracted_audio()))
+        self.notify_on_complete_var.set(bool(self.config.get_notify_on_complete()))
         
         # 保存先フォルダ設定
         saved_output_dir = self.config.get_output_dir()
@@ -273,14 +344,19 @@ class WorkflowPanel(ttk.Frame):
         self._toggle_pass5()
 
     def select_file(self) -> None:
-        """音声ファイルを選択する。"""
+        """メディアファイル（音声/動画）を選択する。"""
         path = filedialog.askopenfilename(
-            title="音声ファイルを選択",
-            filetypes=[("Audio Files", "*.wav *.mp3 *.m4a *.flac"), ("All Files", "*.*")],
+            title="音声/動画ファイルを選択",
+            filetypes=[
+                ("Media Files", "*.wav *.mp3 *.m4a *.flac *.mp4 *.mov *.mkv *.avi *.webm"),
+                ("Audio Files", "*.wav *.mp3 *.m4a *.flac"),
+                ("Video Files", "*.mp4 *.mov *.mkv *.avi *.webm"),
+                ("All Files", "*.*"),
+            ],
         )
         if path:
             self.selected_file = Path(path)
-            self.file_var.set(f"音声ファイル: {self.selected_file.name}")
+            self.file_var.set(f"メディア: {self.selected_file.name}")
 
     def select_output_dir(self) -> None:
         """保存先フォルダを選択する。"""
@@ -290,10 +366,27 @@ class WorkflowPanel(ttk.Frame):
             self.output_dir_var.set(f"保存先フォルダ: {self.output_dir}")
             self.config.set_output_dir(self.output_dir)
 
+    def _open_output_folder(self) -> None:
+        target = self._last_output_dir or self.output_dir
+        if target is None:
+            return
+        if not target.exists():
+            messagebox.showerror("エラー", "出力フォルダが見つかりません。")
+            return
+        try:
+            if sys.platform.startswith("darwin"):
+                subprocess.run(["open", str(target)], check=False)
+            elif os.name == "nt":
+                os.startfile(str(target))  # type: ignore[attr-defined]
+            else:
+                subprocess.run(["xdg-open", str(target)], check=False)
+        except Exception as exc:
+            messagebox.showerror("エラー", f"フォルダを開けませんでした: {exc}")
+
     def run_pipeline(self) -> None:
         """パイプラインを実行する。"""
         if not self.selected_file:
-            messagebox.showerror("エラー", "音声ファイルを選択してください。")
+            messagebox.showerror("エラー", "音声/動画ファイルを選択してください。")
             return
         
         if self.is_running:
@@ -316,6 +409,8 @@ class WorkflowPanel(ttk.Frame):
         self.base_phase_var.set("準備中")
         self.output_var.set("")
         self.metrics_var.set("")
+        self._last_output_dir = None
+        self.open_output_button.configure(state=tk.DISABLED)
         self.progress["value"] = 0
         self._start_rolling_animation()
 
@@ -335,6 +430,8 @@ class WorkflowPanel(ttk.Frame):
                 self._stop_rolling_animation()
                 self._set_running_state(False)
                 return
+
+        start_delay = self._get_start_delay()
         
         # コントローラーで並列実行
         self.controller.run_workflow(
@@ -343,10 +440,13 @@ class WorkflowPanel(ttk.Frame):
             subtitle_dir=self.output_dir,
             llm_provider=self.llm_provider_var.get() or None,
             llm_profile=self.llm_profile_var.get() or None,
+            workflow=self.workflow_var.get() or "workflow1",
             pass1_model=self.pass1_model_var.get().strip() or None,
             pass2_model=self.pass2_model_var.get().strip() or None,
             pass3_model=self.pass3_model_var.get().strip() or None,
             pass4_model=self.pass4_model_var.get().strip() or None,
+            start_delay=start_delay,
+            keep_extracted_audio=bool(self.keep_extracted_audio_var.get()),
             enable_pass5=enable_pass5,
             pass5_max_chars=pass5_max_chars,
             pass5_model=pass5_model,
@@ -368,10 +468,27 @@ class WorkflowPanel(ttk.Frame):
         self.phase_var.set("完了")
         self.progress["value"] = 100
         if output_paths:
-            self.output_var.set(f"出力: {output_paths[-1].name}")
+            srt_path = next((p for p in output_paths if p.suffix.lower() == ".srt"), None)
+            last_path = srt_path or output_paths[-1]
+            display = f"{last_path.parent.name}/{last_path.name}" if last_path.parent.name else last_path.name
+            self.output_var.set(f"出力: {display}")
+            self._last_output_dir = last_path.parent
+            if self._last_output_dir.exists():
+                self.open_output_button.configure(state=tk.NORMAL)
+
+        if self.notify_on_complete_var.get():
+            try:
+                from src.utils.notification import send_notification
+
+                output_name = output_paths[-1].name if output_paths else "完了"
+                send_notification("FlowCut", f"字幕生成が完了しました: {output_name}")
+            except Exception:
+                pass
         
         # メトリクス表示
         if metrics:
+            total_prompt_tokens = int(metrics.get("total_prompt_tokens") or 0)
+            total_completion_tokens = int(metrics.get("total_completion_tokens") or 0)
             total_tokens = metrics.get("total_tokens") or 0
             total_cost = float(metrics.get("total_cost_usd") or 0.0)
             total_elapsed_sec = float(metrics.get("total_elapsed_sec") or 0.0)
@@ -392,14 +509,16 @@ class WorkflowPanel(ttk.Frame):
                 lines.append(f"時間: {time_str}")
 
             if metrics_files_found <= 0:
-                lines.append("トークン: - / コスト: -（メトリクス未取得）")
+                lines.append("トークン: - / - / - / コスト: -（メトリクス未取得）")
                 self.metrics_var.set("\n".join(lines))
                 return
 
             suffix = ""
             if int(total_tokens) <= 0 and total_cost <= 0.0:
                 suffix = "（LLM未実行/usage未取得の可能性）"
-            lines.append(f"トークン: {int(total_tokens)} / コスト: ${total_cost:.3f}{suffix}")
+            lines.append(
+                f"トークン: {total_prompt_tokens} / {total_completion_tokens} / {int(total_tokens)} / コスト: ${total_cost:.3f}{suffix}"
+            )
 
             per_runner = metrics.get("per_runner") or {}
             pass5_enabled = bool(metrics.get("pass5_enabled"))
@@ -414,20 +533,33 @@ class WorkflowPanel(ttk.Frame):
                     durations = info.get("pass_durations") or {}
                     if not isinstance(durations, dict):
                         durations = {}
-
-                    p1 = durations.get("pass1", "-")
-                    p2 = durations.get("pass2", "-")
-                    p3 = durations.get("pass3", "-")
-                    p4 = durations.get("pass4", "-")
+                    pass_metrics = info.get("pass_metrics") or {}
+                    if not isinstance(pass_metrics, dict):
+                        pass_metrics = {}
 
                     lines.append(f"[{slug}] 文字起こし: {transcribe_time} / LLM合計: {llm_two_pass_time}")
 
-                    pass_line = f"[{slug}] Pass1: {p1} / Pass2: {p2} / Pass3: {p3} / Pass4: {p4}"
+                    pass_labels = ["pass1", "pass2", "pass3", "pass4"]
                     if pass5_enabled:
-                        p5 = durations.get("pass5")
-                        value = p5.strip() if isinstance(p5, str) and p5.strip() else "-"
-                        pass_line += f" / Pass5: {value}"
-                    lines.append(pass_line)
+                        pass_labels.append("pass5")
+
+                    for label in pass_labels:
+                        duration = durations.get(label)
+                        duration_str = duration.strip() if isinstance(duration, str) and duration.strip() else "-"
+                        usage = pass_metrics.get(label) or {}
+                        if not isinstance(usage, dict):
+                            usage = {}
+                        prompt = usage.get("prompt_tokens")
+                        completion = usage.get("completion_tokens")
+                        total = usage.get("total_tokens")
+                        if isinstance(prompt, (int, float)) and isinstance(completion, (int, float)) and isinstance(total, (int, float)):
+                            token_str = f"{int(prompt)} / {int(completion)} / {int(total)}"
+                        else:
+                            token_str = "- / - / -"
+                        cost = usage.get("cost_total_usd")
+                        cost_str = f"${float(cost):.3f}" if isinstance(cost, (int, float)) else "-"
+                        pass_name = label.replace("pass", "Pass")
+                        lines.append(f"[{slug}] {pass_name}: {duration_str} / トークン: {token_str} / コスト: {cost_str}")
 
             self.metrics_var.set("\n".join(lines))
         else:
@@ -491,6 +623,21 @@ class WorkflowPanel(ttk.Frame):
         if name:
             self._apply_profile_to_pass_models(name)
             self.config.set_llm_profile(name)
+
+    def _on_workflow_changed(self, _event: object) -> None:
+        self.config.set_workflow(self.workflow_var.get())
+
+    def _on_start_delay_changed(self, _event: object) -> None:
+        self.config.set_start_delay(self._get_start_delay())
+
+    def _on_save_logs_changed(self) -> None:
+        self.config.set_save_logs(bool(self.save_logs_var.get()))
+
+    def _on_keep_extracted_audio_changed(self) -> None:
+        self.config.set_keep_extracted_audio(bool(self.keep_extracted_audio_var.get()))
+
+    def _on_notify_on_complete_changed(self) -> None:
+        self.config.set_notify_on_complete(bool(self.notify_on_complete_var.get()))
 
     def _toggle_advanced(self) -> None:
         """詳細設定の表示/非表示を切り替える。"""
@@ -565,6 +712,14 @@ class WorkflowPanel(ttk.Frame):
     def _on_pass5_model_changed(self, _event: object) -> None:
         model = (self.pass5_model_var.get() or "").strip()
         self.config.set_pass5_model(model or None)
+
+    def _get_start_delay(self) -> float:
+        raw = (self.start_delay_var.get() or "").strip()
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, value)
 
     def _format_elapsed(self, seconds: float) -> str:
         """経過時間をフォーマットする。"""

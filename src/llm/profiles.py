@@ -133,4 +133,11 @@ def list_models_by_provider() -> Dict[str, Set[str]]:
     return by_provider
 
 
-__all__ = ["LlmProfile", "get_profile", "list_profiles", "list_models_by_provider"]
+def reload_profiles() -> None:
+    """プロファイルキャッシュをクリアし、次回アクセス時に再読み込みさせる。"""
+    global _PROFILE_CACHE
+    _PROFILE_CACHE = None
+
+
+__all__ = ["LlmProfile", "get_profile", "list_profiles", "list_models_by_provider", "reload_profiles"]
+

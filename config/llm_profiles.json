@@ -9,10 +9,17 @@
     },
     "openai": {
       "provider": "openai",
-      "pass1_model": "gpt-5-mini",
-      "pass2_model": "gpt-5-mini",
-      "pass3_model": "gpt-5-mini",
-      "pass4_model": "gpt-5-mini"
+      "pass1_model": "gpt-5.2",
+      "pass2_model": "gpt-5.2",
+      "pass3_model": "gpt-5.2",
+      "pass4_model": "gpt-5.2"
+    },
+    "anthropic": {
+      "provider": "anthropic",
+      "pass1_model": "claude-sonnet-4-5",
+      "pass2_model": "claude-sonnet-4-5",
+      "pass3_model": "claude-sonnet-4-5",
+      "pass4_model": "claude-sonnet-4-5"
     }
   },
   "models": {
@@ -22,12 +29,12 @@
       "gemini-3-pro-preview"
     ],
     "openai": [
+      "gpt-5.2",
       "gpt-5.1",
       "gpt-5-mini"
     ],
     "anthropic": [
-      "claude-sonnet-4-5-20251001",
-      "claude-haiku-4-5-20251015"
+      "claude-sonnet-4-5"
     ]
   }
 }

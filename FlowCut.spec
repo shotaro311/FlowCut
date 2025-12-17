@@ -1,13 +1,30 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
+import glob
 
 datas = [('config', 'config')]
-binaries = [('/opt/homebrew/bin/ffmpeg', '.')]
+
+# ffmpegバイナリを 'ffmpeg_bin' サブディレクトリに配置
+# これにより、PyAVのffmpegライブラリとの競合を避ける
+binaries = [('/opt/homebrew/bin/ffmpeg', 'ffmpeg_bin')]
+
+# Homebrew版ffmpegライブラリもffmpeg_binに配置（ffmpegバイナリが参照する）
+ffmpeg_libs = glob.glob('/opt/homebrew/Cellar/ffmpeg/*/lib/*.dylib')
+for lib in ffmpeg_libs:
+    binaries.append((lib, 'ffmpeg_bin'))
+
 hiddenimports = ['mlx_whisper', 'mlx']
+
+# mlx_whisper
 tmp_ret = collect_all('mlx_whisper')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+
+# mlx
 tmp_ret = collect_all('mlx')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+
+# 注意: collect_all('av') は使用しない
+# PyAVのffmpegライブラリがHomebrew ffmpegと競合するため
 
 
 a = Analysis(
@@ -19,7 +36,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['av'],  # PyAVを除外（ffmpegライブラリ競合を避けるため）
     noarchive=False,
     optimize=0,
 )
