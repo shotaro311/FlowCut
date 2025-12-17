@@ -26,6 +26,7 @@
 ### 文章整形（LLM API）
 以下のプロバイダーから選択可能。**Plan推奨デフォルトは Google (gemini-3-pro-preview = Gemini 3.0 Pro)**、ただし **Pass3 のみ gemini-2.5-flash** でコスト最適化。  
 環境変数 `LLM_PASS1_MODEL` / `LLM_PASS2_MODEL` / `LLM_PASS3_MODEL` で各パスのモデルを自由に上書き可能（例: `gpt-5.1`, `claude-sonnet-4-20250514`）。プロバイダー指定は `--llm` で行い、モデル名は文字列そのまま渡せる。
+また、workflow2 / workflow3 は `LLM_WF{2|3}_PASS{1..4}_MODEL` でワークフロー別に上書き可能（未設定なら `LLM_PASS{n}_MODEL` を使用）。
 ※ CLIでは `--llm` を明示指定しない限り整形とSRT生成は実行されず、文字起こしJSONのみ保存される。  
 ※ **三段階LLMワークフロー（Three-Pass）** を採用し、全文をLLMに渡して意味的改行および最終検証を実施。
   - **Pass 1**: テキストクリーニング（削除・置換のみ）
@@ -59,6 +60,15 @@ LLM_PASS1_MODEL=gemini-3-pro-preview
 LLM_PASS2_MODEL=gemini-3-pro-preview
 LLM_PASS3_MODEL=gemini-2.5-flash
 LLM_PASS4_MODEL=gemini-2.5-flash  # 省略時は LLM_PASS3_MODEL を再利用
+# workflow別のモデル上書き（任意 / workflow2=WF2, workflow3=WF3）
+LLM_WF2_PASS1_MODEL=gemini-3-pro-preview
+LLM_WF2_PASS2_MODEL=gemini-3-pro-preview
+LLM_WF2_PASS3_MODEL=gemini-2.5-flash
+LLM_WF2_PASS4_MODEL=gemini-2.5-flash
+LLM_WF3_PASS1_MODEL=gemini-3-pro-preview
+LLM_WF3_PASS2_MODEL=gemini-3-pro-preview
+LLM_WF3_PASS3_MODEL=gemini-2.5-flash
+LLM_WF3_PASS4_MODEL=gemini-2.5-flash
 # Anthropic Claude
 ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxx
 ANTHROPIC_MODEL=claude-sonnet-4-20250514
@@ -157,10 +167,15 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
     - **Pass3（検証＋校正）:** 問題がなくても最終確認のため実行する。  
         - workflow1: 短行（1〜4文字）や引用分割の修正を行う（必要に応じて行範囲を調整）。  
         - workflow2: 誤字脱字修正・辞書（Glossary）に基づく固有名詞統一・政治関連用語の表記統一を行う（原則として行範囲は変更しない）。  
+        - workflow3: カスタム用。ここを書き換えると workflow3 にだけ反映される（必要なら行範囲の調整も許可）。  
     - **workflow2のPass1モデルフォールバック:** workflow2のPass1が **モデル不正** または **コンテキスト上限超過** で失敗した場合は、Pass1のみ `LLM_PASS1_MODEL` で再試行する（ワークフローは workflow2 のまま）。
     - **Pass4（長さ違反行のみ再LLM）:** Pass3後に5文字未満/17文字超の行だけを再度LLMにかけ直す。出力が空/不正の場合は元行を維持し、Pass4 の段階で出力された `lines` をそのまま採用する（Pass4 後にローカルでの強制再分割は行わない）。  
     - **末尾カバレッジ保証（プロバイダ差異の吸収）:** 一部プロバイダ（特に OpenAI）では、Pass2/Pass3 の `lines` が先頭側に偏り、末尾の単語に対応する行が生成されないケースがある。この場合は TwoPassFormatter 内のフォールバック（`_ensure_trailing_coverage`）により、未カバーの単語から簡易な行を自動生成し、**常に文字起こし全文がSRTに反映される**ようにする。
     - **Pass5（オプション）:** SRT生成後の後処理として、指定文字数を超える長行のみLLMで改行する（タイムコードは変更しない）。
+*   **ワークフロー定義（独立設計）**
+    *   `src/llm/workflows/` 配下に workflow ごとのプロンプトと挙動を定義する（`workflow1.py` / `workflow2.py` / `workflow3.py`）。
+    *   GUI/CLI は `workflow1|2|3` を選択して実行する。
+    *   workflow ファイルを削除しても他の workflow に影響しない（不明な workflow が指定された場合は workflow1 にフォールバック）。
 *   **プロンプトの役割（two-pass）:**
     1.  パス1: 置換/削除のみを operations 配列(JSON)で返す。挿入禁止・順序を変えない。
     2.  パス2: 17文字以内の自然な行分割を `{"lines":[{"from":0,"to":10,"text":"..."}]}` 形式で返す。

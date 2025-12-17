@@ -205,10 +205,13 @@ def execute_poc_run(
                 else:
 
                     def _build_formatter(workflow: str):
-                        if workflow == "workflow2":
+                        from src.llm.workflows.registry import get_workflow
+
+                        wf = get_workflow(workflow)
+                        if wf.optimized_pass4:
                             try:
                                 from src.llm.two_pass_optimized import TwoPassFormatter as Formatter
-                                logger.info("Using Optimized TwoPassFormatter (workflow2)")
+                                logger.info("Using Optimized TwoPassFormatter (%s)", wf.slug)
                             except ImportError:
                                 logger.warning(
                                     "src.llm.two_pass_optimized not found; falling back to standard TwoPassFormatter"
@@ -225,7 +228,7 @@ def execute_poc_run(
                             pass2_model=options.llm_pass2_model,
                             pass3_model=options.llm_pass3_model,
                             pass4_model=options.llm_pass4_model,
-                            workflow=workflow,
+                            workflow=wf.slug,
                             glossary_terms=options.glossary_terms,
                             run_id=run_id,
                             source_name=input_path.name,

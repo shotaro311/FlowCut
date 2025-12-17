@@ -65,15 +65,17 @@ def _normalize_llm_provider(raw: Optional[str]) -> Optional[str]:
 def _normalize_workflow(raw: Optional[str]) -> str:
     """
     ワークフロー名を正規化するヘルパー。
-    - None / 空文字は workflow1（従来挙動）にマップ
+    - None / 空文字は workflow1 にマップ
     - 未知の値はエラーにする
     """
+    from src.llm.workflows.registry import list_workflows
+
     if raw is None:
         return "workflow1"
     slug = raw.strip().lower()
     if not slug:
         return "workflow1"
-    allowed = ["workflow1", "workflow2"]
+    allowed = [wf.slug for wf in list_workflows()]
     if slug not in allowed:
         raise typer.BadParameter(f"未対応のワークフローです: {slug}. 候補: {allowed}")
     return slug

@@ -139,16 +139,20 @@ class WorkflowPanel(ttk.Frame):
         workflow_row = ttk.Frame(options_frame)
         workflow_row.pack(fill=tk.X, pady=(2, 2))
         ttk.Label(workflow_row, text="ワークフロー:").pack(side=tk.LEFT)
+        from src.llm.workflows.registry import list_workflows
+        workflow_options = [wf.slug for wf in list_workflows()]
         workflow_combo = ttk.Combobox(
             workflow_row,
             textvariable=self.workflow_var,
-            values=["workflow1", "workflow2"],
+            values=workflow_options,
             state="readonly",
             width=16,
         )
         workflow_combo.pack(side=tk.LEFT, padx=(4, 0))
         workflow_combo.bind("<<ComboboxSelected>>", self._on_workflow_changed)
-        ttk.Label(workflow_row, text="workflow2: 最適化版", foreground="#888888").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Label(workflow_row, text="workflow2: 校正/最適化  workflow3: カスタム", foreground="#888888").pack(
+            side=tk.LEFT, padx=(8, 0)
+        )
         
         # 詳細設定トグル
         advanced_row = ttk.Frame(options_frame)

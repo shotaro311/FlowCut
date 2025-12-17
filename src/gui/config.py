@@ -226,15 +226,16 @@ class GuiConfig:
 
     def get_workflow(self) -> str:
         """選択中のワークフローを取得する。"""
-        workflow = self._config.get("workflow", "workflow1")
-        if workflow in ("workflow1", "workflow2"):
-            return workflow
-        return "workflow1"
+        from src.llm.workflows.registry import get_workflow
+
+        return get_workflow(self._config.get("workflow")).slug
 
     def set_workflow(self, workflow: str) -> None:
         """ワークフローの設定を保存する。"""
-        if workflow in ("workflow1", "workflow2"):
-            self._config["workflow"] = workflow
+        from src.llm.workflows.registry import get_workflow, is_known_workflow
+
+        if is_known_workflow(workflow):
+            self._config["workflow"] = get_workflow(workflow).slug
             self.save_config()
 
     # --- 抽出音声保存設定 ---

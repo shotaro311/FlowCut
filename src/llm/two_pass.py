@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import uuid
 import time
@@ -14,6 +15,7 @@ from typing import List, Sequence, Dict, Any, Iterable, Callable
 from src.config import get_settings
 from src.llm.formatter import FormatterError, get_provider, FormatterRequest
 from src.llm.prompts import PromptPayload
+from src.llm.workflows.registry import get_workflow
 from src.transcribe.base import WordTimestamp
 from src.llm.usage_metrics import record_pass_time
 from src.utils.glossary import DEFAULT_GLOSSARY_TERMS, normalize_glossary_terms
@@ -205,6 +207,17 @@ def _call_llm_with_parse(
     raise FormatterError(f"{pass_label} parse failed (model={model_override or '-'}): {last_exc}") from last_exc  # type: ignore[misc]
 
 
+def _resolve_workflow_pass_model(wf_env_number: int | None, pass_num: int) -> str | None:
+    if not wf_env_number:
+        return None
+    key = f"LLM_WF{wf_env_number}_PASS{pass_num}_MODEL"
+    value = os.getenv(key)
+    if not value:
+        return None
+    value = value.strip()
+    return value or None
+
+
 def _looks_like_context_limit_error(message: str) -> bool:
     msg = message.lower()
     return any(
@@ -289,25 +302,20 @@ class TwoPassFormatter:
         self.provider_slug = llm_provider
         self.temperature = temperature
         self.timeout = timeout
-        # ワークフロー（プロンプト＋関連ロジックのセット）
-        # 現時点では "workflow1" / "workflow2" を想定し、未知の値は workflow1 にフォールバックする。
-        self.workflow = workflow if workflow in {"workflow1", "workflow2"} else "workflow1"
-        # Per-pass model selection（CLI → workflow別env → 共通env の優先順位）
-        if self.workflow == "workflow2":
-            self.pass1_model = pass1_model or settings.wf2_pass1_model or settings.pass1_model
-            self.pass2_model = pass2_model or settings.wf2_pass2_model or settings.pass2_model
-            self.pass3_model = pass3_model or settings.wf2_pass3_model or settings.pass3_model
-            # Pass4 は settings.wf2_pass4_model → settings.pass4_model の順に参照
-            self.pass4_model = pass4_model or settings.wf2_pass4_model or settings.pass4_model
-            self._wf2_pass1_fallback_model = settings.pass1_model
-        else:
-            self.pass1_model = pass1_model or settings.pass1_model
-            self.pass2_model = pass2_model or settings.pass2_model
-            self.pass3_model = pass3_model or settings.pass3_model  # Default to Flash for cost efficiency
-            # Pass4 は settings.pass4_model（= LLM_PASS4_MODEL or LLM_PASS3_MODEL）を尊重しつつ、
-            # プロファイルやCLIからの引数で上書きできるようにする。
-            self.pass4_model = pass4_model or settings.pass4_model
-            self._wf2_pass1_fallback_model = None
+        self.workflow_def = get_workflow(workflow)
+        self.workflow = self.workflow_def.slug
+
+        wf_num = self.workflow_def.wf_env_number
+        wf_p1 = _resolve_workflow_pass_model(wf_num, 1)
+        wf_p2 = _resolve_workflow_pass_model(wf_num, 2)
+        wf_p3 = _resolve_workflow_pass_model(wf_num, 3)
+        wf_p4 = _resolve_workflow_pass_model(wf_num, 4)
+
+        self.pass1_model = pass1_model or wf_p1 or settings.pass1_model
+        self.pass2_model = pass2_model or wf_p2 or settings.pass2_model
+        self.pass3_model = pass3_model or wf_p3 or settings.pass3_model
+        self.pass4_model = pass4_model or wf_p4 or settings.pass4_model
+        self._pass1_fallback_model = settings.pass1_model if self.workflow_def.pass1_fallback_enabled else None
         # 辞書（Glossary）: None の場合はデフォルト辞書を利用する
         self.glossary_terms = (
             list(DEFAULT_GLOSSARY_TERMS)
@@ -423,9 +431,9 @@ class TwoPassFormatter:
                     log_sink=self,
                 )
             except FormatterError as exc:
-                fallback_model = self._wf2_pass1_fallback_model
+                fallback_model = self._pass1_fallback_model
                 if (
-                    self.workflow == "workflow2"
+                    self.workflow_def.pass1_fallback_enabled
                     and fallback_model
                     and fallback_model != self.pass1_model
                     and (
@@ -513,10 +521,11 @@ class TwoPassFormatter:
             if parsed3:
                 pass3_lines = _parse_lines(parsed3)
                 if pass3_lines and _has_full_word_coverage(pass3_lines, updated_words):
-                    # workflow2では「タイムコード（= from/to）」を変えない方針のため、
-                    # Pass3が範囲を変更してきた場合は採用しない（text校正のみを許可）。
-                    if self.workflow == "workflow2" and not _has_same_line_ranges(pass2_lines, pass3_lines):
-                        logger.warning("Pass 3 changed line ranges in workflow2; using Pass 2 output instead")
+                    if (
+                        not self.workflow_def.allow_pass3_range_change
+                        and not _has_same_line_ranges(pass2_lines, pass3_lines)
+                    ):
+                        logger.warning("Pass 3 changed line ranges; using Pass 2 output instead")
                     else:
                         lines = pass3_lines
                 elif pass3_lines:
@@ -753,288 +762,27 @@ class TwoPassFormatter:
         return sorted(fallback_lines, key=lambda l: (l.start_idx, l.end_idx))
 
     def _build_pass1_prompt(self, raw_text: str, words: Sequence[WordTimestamp]) -> str:
-        indexed = _build_indexed_words(words)
-        if self.workflow == "workflow2":
-            # 改善案（docs/reports/prompt_improvement_proposal_20251125.md）に基づくバージョン
-            return (
-                "あなたはプロの字幕エディターです。以下の単語列を順番を変えずに、"
-                "**明らかな誤変換のみ**最小限の修正を加えてください。\n\n"
-                "# 許可される操作\n"
-                "- **replace**: 明らかな誤変換を正しい語に置き換え\n"
-                "- **delete**: 明らかなノイズ（フィラー、重複）を削除\n"
-                "- **禁止**: 挿入（音声に無い単語を追加しない）、並び替え、要約、意訳\n\n"
-                "# 特に注意すべき誤変換（文脈が明確な場合のみ修正）\n"
-                "1. **有名な固有名詞**（政治家・地名・企業名・政党名）\n"
-                "   - 文脈から明らかに誤変換と判断できる場合のみ修正\n"
-                "   - 例: 政治の話で「石川」→「石破」、「安政党」→「参政党」\n"
-                "   - 判断が難しい場合は修正しない（人名の誤認識リスクを避ける）\n\n"
-                "2. **一般的な誤変換パターン**\n"
-                "   - 同音異義語の明らかな誤り（例: 「会う」→「合う」）\n"
-                "   - カタカナ語の誤変換（例: 「コンピューター」→「コンピュータ」）\n\n"
-                "# 禁止事項（厳守）\n"
-                "- 意訳・要約・言い換えは絶対に禁止\n"
-                "- 音声に無い単語を追加しない\n"
-                "- 単語の順序を変えない\n"
-                "- 判断が難しい場合は修正しない（保守的に）\n\n"
-                f"# 入力\n"
-                f"元のテキスト:\n{raw_text}\n\n"
-                f"単語リスト（index:word）:\n{indexed}\n\n"
-                "# 出力\n"
-                "以下のJSON形式のみを返してください。説明文・コードフェンスは禁止。\n"
-                "{\n"
-                '  "operations": [\n'
-                '    {"type": "replace", "start_idx": 10, "end_idx": 11, "text": "石破"},\n'
-                '    {"type": "delete", "start_idx": 25, "end_idx": 25}\n'
-                "  ]\n"
-                "}\n"
-                "操作が不要な場合は空配列を返してください: {\"operations\": []}\n"
-            )
-        # workflow1（従来挙動）
-        return (
-            "あなたはプロの字幕エディターです。以下の単語列を順番を変えずに最小限の修正だけ加えてください。\n"
-            "- 許可される操作: replace, delete（挿入は禁止。音声に無い単語を足さないこと）。\n"
-            "- 単語の順序は変えないでください。\n"
-            "- 出力は JSON の operations 配列のみ。説明文・コードフェンスは禁止。\n\n"
-            f"入力テキスト:\n{raw_text}\n\n"
-            f"単語リスト（index:word）:\n{indexed}\n\n"
-            "出力フォーマット例:\n"
-            "{\n"
-            '  "operations": [\n'
-            '    {"type": "replace", "start_idx": 10, "end_idx": 11, "text": "カレーライス"},\n'
-            '    {"type": "delete", "start_idx": 25, "end_idx": 25}\n'
-            "  ]\n"
-            "}\n"
-            "追加の説明・前後文字列・コードフェンスは一切不要です。"
-        )
+        if self.workflow_def.pass1_prompt is None:
+            raise FormatterError(f"未設定のワークフローです: {self.workflow}")
+        return self.workflow_def.pass1_prompt(raw_text, words)
 
     def _build_pass2_prompt(self, words: Sequence[WordTimestamp], *, max_chars: float) -> str:
-        indexed = _build_indexed_words(words)
-        if self.workflow == "workflow2":
-            # 改善版（簡潔化＋短行/17文字厳守の強調）
-            return (
-                "# Role\n"
-                "あなたは熟練の動画テロップ編集者です。\n"
-                "以下の単語リストを、視聴者が読みやすいように行分割してください。\n\n"
-                "# 最重要ルール（これを破ったら即アウト）\n"
-                "1. **行頭に助詞・補助表現・小さい文字を置かない**\n"
-                "   - 「が」「は」「を」「に」「で」「と」「も」「から」「まで」「よ」「ね」「な」「わ」や、\n"
-                "     「んじゃない」「が必要」「と思って」、および「ぁぃぅぇぉゃゅょっァィゥェォャュョッ」「ん」「ン」などで行を *始めない*（前の行とひとまとまりにする）\n\n"
-                "2. **行末の句読点（、。）は削除**\n"
-                "   - 文中の句読点は残してよい\n\n"
-                "3. **助詞だけ／短すぎる助詞行を作らない**\n"
-                "   - 「が」「に」「を」「んで」など助詞を含む行が1〜4文字程度しかない場合は、必ず前後の行と統合して5文字以上にする\n\n"
-                "4. **文字数は5〜17文字の範囲を厳守**\n"
-                f"   - 1行の最大: {int(max_chars)}文字（全角）← 厳守\n"
-                "   - 1行の最小: 5文字（全角）← 厳守\n"
-                "   - 17文字を超える場合は、必ず前後の文脈を見て分割できる場所を探す\n"
-                "   - 17文字超えは絶対に許容しない\n\n"
-                "# 自然な分割ルール\n"
-                "- 意味のまとまり（文節・フレーズ）を優先\n"
-                "- 助詞での分割は許容されるが、「に」「が」「を」などが行頭に単独で残る分割はしない\n"
-                "  （例: 「政策に」7文字 → OK、「に」1文字 → NG）\n"
-                "- 引用表現「〜って言う/思う」は分割しない\n\n"
-                "# 禁止事項\n"
-                "- 単語の順序を変えない、結合しない\n"
-                "- 要約・意訳・言い換えをしない\n"
-                "- 1〜4文字の極端に短い行を作らない\n\n"
-                "# 良い例\n"
-                "✅ 「私は大学の時の」→「12月ぐらいかなと思って」\n"
-                "   理由: 意味のまとまり、5文字以上、17文字以内\n\n"
-                "# 悪い例\n"
-                "❌ 「私は大学の時の」→「に」（1文字）\n"
-                "   理由: 極端に短い\n"
-                "❌ 「何するんだって」→「言うから」\n"
-                "   理由: 引用表現の分割\n\n"
-                f"# Input\n"
-                f"単語リスト（index:word）:\n{indexed}\n\n"
-                "# Output\n"
-                "以下のJSONのみを返してください（説明・コードフェンス禁止）:\n"
-                "{\n"
-                '  "lines": [\n'
-                '    {"from": 0, "to": 10, "text": "私は大学の12月ぐらい"},\n'
-                '    {"from": 11, "to": 25, "text": "政治家になろうと決めていて"}\n'
-                "  ]\n"
-                "}\n"
-            )
-        # workflow1（従来挙動）
-        return (
-            "# Role\n"
-            "あなたは熟練の動画テロップ編集者です。\n"
-            "提供されたテキストを、視聴者が最も読みやすいリズムで読めるように、以下の【思考ワークフロー】に従って処理し、行のインデックス範囲を JSON で返してください。\n\n"
-            "# Constraints (制約)\n"
-            f"- 1行の最大文字数：全角{int(max_chars)}文字\n"
-            "- 出力形式：JSON の lines 配列のみ（例を参照）\n"
-            "- 単語の順序を変えない。結合もしない。\n\n"
-            "# 自然な分割ルール（最優先）\n"
-            "**以下のルールは文字数制約よりも優先度が高い：**\n"
-            "1. **行頭に助詞・補助表現・小さい文字を置かない**: 「が」「は」「を」「に」「で」「と」「も」「から」「まで」「よ」「ね」「な」「わ」や、「んじゃない」「が必要」「と思って」、および「ぁぃぅぇぉゃゅょっァィゥェォャュョッ」「ん」「ン」などで行を *始めない*（前の行とひとまとまりにする）\n"
-            "2. **接続表現・接続詞で分割しない**: 〜と思って、〜ものの、〜たら、〜ので、〜けど、〜けれど、んで、それで、そして 等で文を切らない\n"
-            "3. **助詞だけ／短すぎる助詞行を作らない**: 「が」「に」「を」「んで」など助詞を含む行が1〜4文字程度しかない場合は必ず前後の行と統合し、5文字以上のまとまりにする\n"
-            "4. **活用語尾の保持**: 〜てた、〜だった、〜たと 等の活用形は分割せずひとまとまりに\n"
-            "5. **引用表現の保持**: 〜って言う、〜って思う、〜ってこと 等は分割しない\n\n"
-            "# 分割の良い例・悪い例\n"
-            "❌ 悪い例:\n"
-            "  - 「考えた」→「ことがあったから」 （助詞「が」で分断）\n"
-            "  - 「なった時」→「に」 （1文字のみの行）\n"
-            "  - 「目指す」→「ものの」 （接続助詞で分断）\n"
-            "  - 「何するんだ」→「って言うから」 （引用「って」で分断）\n"
-            "  - 「思います」→「よ」 （終助詞「よ」が単独・1文字）\n"
-            "  - 「怖かった」→「んで」 （接続詞「んで」が単独・2文字）\n\n"
-            "✅ 良い例:\n"
-            "  - 「考えたことが」→「あったから」 （助詞を含めてひとまとまり）\n"
-            "  - 「なった時に」→「いやしないと」 （最小4文字以上）\n"
-            "  - 「目指すものの」→「ダメな場合も」 （接続表現を保持）\n"
-            "  - 「何するんだって言うから」→「家の手伝いを」 （引用表現を保持）\n"
-            "  - 「思いますよ」→「いらっしゃって」 （終助詞を含めて4文字以上）\n"
-            "  - 「怖かったんで」→「父がすっかり」 （接続詞を含めて4文字以上）\n\n"
-            "# 禁止事項\n"
-            "- 行末の句読点（、。）は必ず削除すること。文中の句読点は、読みやすさのために残してもよい。\n"
-            "- 助詞・接続詞・活用語尾・終助詞での不自然な分割（上記ルール参照）\n"
-            "- 1〜4文字のみの極端に短い行を残さない（5文字以上必須）\n"
-            "- 引用表現「〜って言う」「〜って思う」の分割\n\n"
-            "# Thinking Workflow (思考ワークフロー)\n"
-            "## Step 1: チャンク分解 (Chunking)\n"
-            "入力されたテキストを、文節や意味の最小単位（チャンク）に分解する。句読点（、。）や接続助詞（〜て、〜が、〜ので、〜から）を強い区切りとして扱う。\n\n"
-            "## Step 2: 行の構築と決定 (Line Building)\n"
-            "チャンクを前から順に追加し、以下の **優先順位** で判定を行う。\n"
-            "**【最優先】自然な意味のまとまり（フレーズ境界）** を保持する\n"
-            f"1. 助詞・接続表現・終助詞での分割を避ける（上記ルール参照）\n"
-            f"2. 文字数オーバー: 現バッファ＋次チャンクが{int(max_chars)}文字を超える場合のみ改行\n"
-            f"3. 文脈区切り: {int(max_chars)}文字以内でも、読点・強い切れ目（〜ます、〜です、〜だ等）で終わるなら改行を検討\n"
-            "4. 最小行長チェック: 分割後の行が5文字未満にならないか確認（4文字以下は禁止）\n\n"
-            "## Step 3: クリーニング (Cleaning)\n"
-            "行末の句読点（、。）を削除。文中の句読点は残してよい。\n\n"
-            "# Input\n"
-            f"単語リスト（index:word）:\n{indexed}\n\n"
-            "# Output\n"
-            "以下のJSONだけを返してください（説明・コードフェンス禁止）。例:\n"
-            "{\n"
-            '  "lines": [\n'
-            '    {"from": 0, "to": 10, "text": "私は大学の12月ぐらい"},\n'
-            '    {"from": 11, "to": 25, "text": "政治家になろうと決めていて"}\n'
-            "  ]\n"
-            "}\n"
-        )
+        if self.workflow_def.pass2_prompt is None:
+            raise FormatterError(f"未設定のワークフローです: {self.workflow}")
+        return self.workflow_def.pass2_prompt(words, max_chars)
 
     def _build_pass3_prompt(self, lines: Sequence[LineRange], words: Sequence[WordTimestamp], issues) -> str:
-        """Build Pass 3 prompt for fixing detected issues."""
-        if self.workflow == "workflow2":
-            # workflow2: 校正（誤字脱字・固有名詞・政治用語）を優先
-            if issues:
-                issue_text = "\n".join(
-                    [f"- {issue.description} → {issue.suggested_action}" for issue in issues]
-                )
-            else:
-                issue_text = "（検出された問題はありません）"
-            current_lines = json.dumps(
-                [{"from": l.start_idx, "to": l.end_idx, "text": l.text} for l in lines],
-                ensure_ascii=False,
-                indent=2,
-            )
-            glossary_text = "\n".join(self.glossary_terms)
-            return (
-                "# Role\n"
-                "あなたはプロの字幕校正者です。\n"
-                "以下の字幕行（SRT生成前の行情報）を校正してください。\n\n"
-                "# 校正ルール（重要）\n"
-                "1. 誤字・脱字を修正する\n"
-                "2. 固有名詞（人名・地名・組織名）は、必ずGlossaryの正しい表記に揃える\n"
-                "3. 政治関連用語（政党名・法案名・政策名など）は、一般に使われる公式表記に統一する\n"
-                "   - ただし確信がない場合は変更しない（誤修正を避ける）\n"
-                "4. from/to（範囲）は一切変更しない（タイムコードに影響するため）\n"
-                "5. 行の順序と行数を変更しない\n"
-                "6. 余計な説明は禁止。JSONのみを返す（コードフェンスも禁止）\n\n"
-                "# Glossary\n"
-                f"{glossary_text}\n\n"
-                "# 検出された問題（参考）\n"
-                f"{issue_text}\n\n"
-                "# Input\n"
-                f"現在の行分割:\n{current_lines}\n\n"
-                "# Output\n"
-                "以下のJSONのみを返してください（説明・コードフェンス禁止）:\n"
-                "{\n"
-                '  "lines": [\n'
-                '    {"from": 0, "to": 11, "text": "私は大学の時の12月ぐらいかな"},\n'
-                '    {"from": 12, "to": 18, "text": "4年生の12月には"},\n'
-                '    {"from": 19, "to": 28, "text": "政治家になろうという腹を決めていて"}\n'
-                "  ]\n"
-                "}\n"
-            )
-
-        # workflow1（従来挙動）
-        indexed = _build_indexed_words(words)
-        if issues:
-            issue_text = "\n".join(
-                [f"- {issue.description} → {issue.suggested_action}" for issue in issues]
-            )
-        else:
-            issue_text = "問題は検出されませんでした。全行を確認し、以下のルールに従って最小限の修正を行ってください。"
-        current_lines = json.dumps(
-            [{"from": l.start_idx, "to": l.end_idx, "text": l.text} for l in lines],
-            ensure_ascii=False,
-            indent=2,
-        )
-        return (
-            "# Role\n"
-            "あなたはテロップの最終チェック担当の熟練編集者です。\n"
-            "Pass 2で作成された字幕の行分割に問題がないか確認し、必要最小限の修正を行ってください。\n\n"
-            "# 検出された問題\n"
-            f"{issue_text}\n\n"
-            "# 修正ルール\n"
-            "1. **1-4文字の極端に短い行**: 前行または次行と統合し、結合後に全行がルールに沿っているか再確認\n"
-            "2. **引用表現の分割「〜って言う/思う」**: 統合して1行に\n"
-            "3. **修正後も制約を維持**: 17文字以内・5文字以上\n"
-            "4. **最小限の修正**: 問題箇所のみ修正（全体を作り直さない）\n"
-            "5. **要約・翻訳・意訳をしない**。語句の追加・削除もしない\n"
-            "6. **語の途中で切れている箇所は必ず連結**（分断された語を統合）\n"
-            "7. **改行の優先度**: (1)「。?!」直後 → (2)「、」直後 → (3) 接続助詞・係助詞など句が自然に切れる後ろ。名詞句/動詞句の途中は切らない。迷う場合は改行しない\n"
-            "8. **元の語順と文脈を保つ**。句読点がない場合も上記7に沿って自然に整形する\n\n"
-            "- 必ず1件以上の行を `lines` 配列で返してください（空配列やnullは禁止）\n\n"
-            "# Input\n"
-            f"単語リスト（index:word）:\n{indexed}\n\n"
-            f"現在の行分割:\n{current_lines}\n\n"
-            "# Output\n"
-            "以下のJSONのみを返してください。説明文・コードフェンス・前後のテキストを含めることは禁止です。\n"
-            "{\n"
-            '  "lines": [\n'
-            '    {"from": 0, "to": 11, "text": "私は大学の時の12月ぐらいかな"},\n'
-            '    {"from": 12, "to": 18, "text": "4年生の12月には"},\n'
-            '    {"from": 19, "to": 28, "text": "政治家になろうという腹を決めていて"},\n'
-            '    {"from": 29, "to": 33, "text": "1月ぐらいから"},\n'
-            '    {"from": 34, "to": 45, "text": "司法試験予備校に申し込んで"}\n'
-            "  ]\n"
-            "}\n"
-        )
+        if self.workflow_def.pass3_prompt is None:
+            raise FormatterError(f"未設定のワークフローです: {self.workflow}")
+        return self.workflow_def.pass3_prompt(lines, words, issues, self.glossary_terms)
 
     def _needs_pass4(self, line: LineRange) -> bool:
         return len(line.text) > 17 or len(line.text) < 5
 
     def _build_pass4_prompt(self, line: LineRange, words: Sequence[WordTimestamp]) -> str:
-        indexed = "\n".join(
-            f"{i}: {w.word}"
-            for i, w in enumerate(words[line.start_idx : line.end_idx + 1], start=line.start_idx)
-        )
-        return (
-            "# Role\n"
-            "あなたはテロップ最終チェックの追加ステップ担当です。与えられた行に対してのみ、条件を満たす複数行に必要最小限で分割してください。\n\n"
-            "# Constraints\n"
-            "- 必ず1行あたり全角5〜17文字に収めること\n"
-            "- 語順を変えない、語を追加/削除しない\n"
-            "- 要約・翻訳・意訳をしない\n"
-            "- 行末の句読点（、。）は削除。文中の句読点は残してよい\n"
-            "- 改行の優先度: (1)「。?!」直後 → (2)「、」直後 → (3) 接続助詞・係助詞など自然な切れ目。\n\n"
-            "# Input\n"
-            f"対象の行テキスト:\n{line.text}\n\n"
-            f"単語リスト（index:word）:\n{indexed}\n\n"
-            "# Output\n"
-            "以下のJSONだけを返してください（説明・コードフェンス禁止）。例:\n"
-            '{\n'
-            '  "lines": [\n'
-            '    {"from": 100, "to": 105, "text": "...."},\n'
-            '    {"from": 106, "to": 110, "text": "...."}\n'
-            '  ]\n'
-            '}\n'
-        )
+        if self.workflow_def.pass4_prompt is None:
+            raise FormatterError(f"未設定のワークフローです: {self.workflow}")
+        return self.workflow_def.pass4_prompt(line, words)
 
     def _run_pass4_fix(self, line: LineRange, words: Sequence[WordTimestamp]) -> List[LineRange]:
         prompt = self._build_pass4_prompt(line, words)
