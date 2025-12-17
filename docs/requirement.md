@@ -157,6 +157,7 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
     - **Pass3（検証＋校正）:** 問題がなくても最終確認のため実行する。  
         - workflow1: 短行（1〜4文字）や引用分割の修正を行う（必要に応じて行範囲を調整）。  
         - workflow2: 誤字脱字修正・辞書（Glossary）に基づく固有名詞統一・政治関連用語の表記統一を行う（原則として行範囲は変更しない）。  
+    - **workflow2のPass1モデルフォールバック:** workflow2のPass1が **モデル不正** または **コンテキスト上限超過** で失敗した場合は、Pass1のみ `LLM_PASS1_MODEL` で再試行する（ワークフローは workflow2 のまま）。
     - **Pass4（長さ違反行のみ再LLM）:** Pass3後に5文字未満/17文字超の行だけを再度LLMにかけ直す。出力が空/不正の場合は元行を維持し、Pass4 の段階で出力された `lines` をそのまま採用する（Pass4 後にローカルでの強制再分割は行わない）。  
     - **末尾カバレッジ保証（プロバイダ差異の吸収）:** 一部プロバイダ（特に OpenAI）では、Pass2/Pass3 の `lines` が先頭側に偏り、末尾の単語に対応する行が生成されないケースがある。この場合は TwoPassFormatter 内のフォールバック（`_ensure_trailing_coverage`）により、未カバーの単語から簡易な行を自動生成し、**常に文字起こし全文がSRTに反映される**ようにする。
     - **Pass5（オプション）:** SRT生成後の後処理として、指定文字数を超える長行のみLLMで改行する（タイムコードは変更しない）。
@@ -179,7 +180,7 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
     *   例: `python -m src.cli.main run input.wav --resume temp/progress_20250120_103000.json`
 *   **ログ記録:**
     *   `logs/processing.log` に処理状況を記録（TODO: 現状は標準出力中心）
-    *   LLM生応答は `logs/llm_raw/` に **1 run（音声×モデル）につき1ファイル** として集約保存（Pass1〜Pass4の生JSONをパスごとセクションにまとめる）
+    *   LLM生応答は `logs/llm_raw/` に **1 run（音声×モデル）につき1ファイル** として集約保存（Pass1〜Pass4の生JSONをパスごとセクションにまとめる）。APIエラーなど **応答が返らない失敗** でも、エラー内容を同ファイルに記録する。
     *   LLM使用量・時間と概算コストは `logs/metrics/{音声ファイル名}_{日付}_{run_id}_metrics.json` に保存し、以下をJSONで持つ:
         *   全体の経過時間（人間が読みやすい形式の `total_elapsed_time`。例: `8m 22.35s`）
         *   transcribe / two-pass 各工程の所要時間（`stage_timings_time`。例: `"transcribe_sec": "1m 28.12s"`）
@@ -290,6 +291,7 @@ python -m src.cli.main run samples/sample_audio.m4a --llm anthropic --rewrite
     *   デフォルトでは `output/` ディレクトリに `{run_id}.srt` を保存（CLIと共通）。  
         * 既に同名ファイルが存在する場合は `name.srt`, `name (1).srt`, `name (2).srt` ... のように **連番サフィックスを付けて保存** し、既存ファイルを保持する。
     *   GUI からは「保存先フォルダを選択」ボタンで任意のディレクトリを指定できる。
+    *   完了後、出力欄の「開く」ボタンから出力フォルダを開ける。
     *   完了時に通知を表示し、GUI下部に「総トークン数」「概算APIコスト（USD、小数点第3位まで）」「総処理時間（待機含む）」を表示する。
         *   追加で、待機時間 / 実処理時間 と、パス別の処理時間・トークン数（prompt / completion / total）・概算コスト（USD、Pass5は有効時のみ）を表示する。
 

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -36,6 +38,7 @@ class WorkflowPanel(ttk.Frame):
         self.metrics_var = tk.StringVar(value="")
         self.phase_var = tk.StringVar(value="")
         self.base_phase_var = tk.StringVar(value="")
+        self._last_output_dir: Path | None = None
         self.rolling_dots = 0
         self.rolling_timer_id = None
         
@@ -261,9 +264,19 @@ class WorkflowPanel(ttk.Frame):
         ttk.Label(status_row, textvariable=self.phase_var).pack(side=tk.LEFT, padx=(4, 0))
         
         # 出力とメトリクス表示
-        self.output_label = ttk.Label(self, textvariable=self.output_var)
-        self.output_label.pack(fill=tk.X, pady=(0, 2))
-        
+        output_row = ttk.Frame(self)
+        output_row.pack(fill=tk.X, pady=(0, 2))
+        self.output_label = ttk.Label(output_row, textvariable=self.output_var, anchor=tk.W)
+        self.output_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.open_output_button = ttk.Button(
+            output_row,
+            text="開く",
+            command=self._open_output_folder,
+            state=tk.DISABLED,
+            width=6,
+        )
+        self.open_output_button.pack(side=tk.RIGHT, padx=(8, 0))
+
         self.metrics_label = ttk.Label(self, textvariable=self.metrics_var)
         self.metrics_label.pack(fill=tk.X)
 
@@ -353,6 +366,23 @@ class WorkflowPanel(ttk.Frame):
             self.output_dir_var.set(f"保存先フォルダ: {self.output_dir}")
             self.config.set_output_dir(self.output_dir)
 
+    def _open_output_folder(self) -> None:
+        target = self._last_output_dir or self.output_dir
+        if target is None:
+            return
+        if not target.exists():
+            messagebox.showerror("エラー", "出力フォルダが見つかりません。")
+            return
+        try:
+            if sys.platform.startswith("darwin"):
+                subprocess.run(["open", str(target)], check=False)
+            elif os.name == "nt":
+                os.startfile(str(target))  # type: ignore[attr-defined]
+            else:
+                subprocess.run(["xdg-open", str(target)], check=False)
+        except Exception as exc:
+            messagebox.showerror("エラー", f"フォルダを開けませんでした: {exc}")
+
     def run_pipeline(self) -> None:
         """パイプラインを実行する。"""
         if not self.selected_file:
@@ -379,6 +409,8 @@ class WorkflowPanel(ttk.Frame):
         self.base_phase_var.set("準備中")
         self.output_var.set("")
         self.metrics_var.set("")
+        self._last_output_dir = None
+        self.open_output_button.configure(state=tk.DISABLED)
         self.progress["value"] = 0
         self._start_rolling_animation()
 
@@ -436,9 +468,13 @@ class WorkflowPanel(ttk.Frame):
         self.phase_var.set("完了")
         self.progress["value"] = 100
         if output_paths:
-            last_path = output_paths[-1]
+            srt_path = next((p for p in output_paths if p.suffix.lower() == ".srt"), None)
+            last_path = srt_path or output_paths[-1]
             display = f"{last_path.parent.name}/{last_path.name}" if last_path.parent.name else last_path.name
             self.output_var.set(f"出力: {display}")
+            self._last_output_dir = last_path.parent
+            if self._last_output_dir.exists():
+                self.open_output_button.configure(state=tk.NORMAL)
 
         if self.notify_on_complete_var.get():
             try:

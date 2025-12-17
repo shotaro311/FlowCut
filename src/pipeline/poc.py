@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple, Callable
 import sys
 import time
 
-from src.llm.two_pass import TwoPassFormatter, TwoPassResult
+from src.llm.two_pass import TwoPassResult
 from src.llm.formatter import FormatterError
 from src.transcribe import (
     TranscriptionConfig,
@@ -204,47 +204,48 @@ def execute_poc_run(
                     logger.warning("wordタイムスタンプが空のためSRT生成をスキップします: %s", run_id)
                 else:
 
-                    # Workflow2の場合は最適化版の実装を使用する
-                    if options.workflow == "workflow2":
-                        try:
-                            from src.llm.two_pass_optimized import TwoPassFormatter as FormatterCls
-                            logger.info("Using Optimized TwoPassFormatter (workflow2)")
-                        except ImportError:
-                            logger.warning("src.llm.two_pass_optimized not found; falling back to standard TwoPassFormatter")
-                            from src.llm.two_pass import TwoPassFormatter as FormatterCls
-                    else:
-                        from src.llm.two_pass import TwoPassFormatter as FormatterCls
+                    def _build_formatter(workflow: str):
+                        if workflow == "workflow2":
+                            try:
+                                from src.llm.two_pass_optimized import TwoPassFormatter as Formatter
+                                logger.info("Using Optimized TwoPassFormatter (workflow2)")
+                            except ImportError:
+                                logger.warning(
+                                    "src.llm.two_pass_optimized not found; falling back to standard TwoPassFormatter"
+                                )
+                                from src.llm.two_pass import TwoPassFormatter as Formatter
+                        else:
+                            from src.llm.two_pass import TwoPassFormatter as Formatter
 
-                    two_pass = FormatterCls(
-                        llm_provider=options.llm_provider,
-                        temperature=options.llm_temperature,
-                        timeout=options.llm_timeout,
-                        pass1_model=options.llm_pass1_model,
-                        pass2_model=options.llm_pass2_model,
-                        pass3_model=options.llm_pass3_model,
-                        pass4_model=options.llm_pass4_model,
-                        workflow=options.workflow,
-                        glossary_terms=options.glossary_terms,
-                        run_id=run_id,
-                        source_name=input_path.name,
-                        start_delay=options.start_delay,
-                        raw_log_dir=raw_llm_log_dir,
-                    )
+                        return Formatter(
+                            llm_provider=options.llm_provider,
+                            temperature=options.llm_temperature,
+                            timeout=options.llm_timeout,
+                            pass1_model=options.llm_pass1_model,
+                            pass2_model=options.llm_pass2_model,
+                            pass3_model=options.llm_pass3_model,
+                            pass4_model=options.llm_pass4_model,
+                            workflow=workflow,
+                            glossary_terms=options.glossary_terms,
+                            run_id=run_id,
+                            source_name=input_path.name,
+                            start_delay=options.start_delay,
+                            raw_log_dir=raw_llm_log_dir,
+                        )
+
+                    two_pass = _build_formatter(options.workflow)
                     # Phase 2-5: LLM passes
                     t_llm_start = time.perf_counter()
-                    try:
-                        if options.progress_callback:
-                            options.progress_callback("LLM Pass 1", 40)
-                        tp_result: TwoPassResult | None = two_pass.run(
-                            text=result.text,
-                            words=result.words or [],
-                            max_chars=17.0,
-                            progress_callback=options.progress_callback,
-                        )
-                        if tp_result:
-                            subtitle_text = tp_result.srt_text
-                    except FormatterError as exc:
-                        logger.warning("二段階LLM整形に失敗しました: %s", exc)
+                    if options.progress_callback:
+                        options.progress_callback("LLM Pass 1", 40)
+                    tp_result: TwoPassResult | None = two_pass.run(
+                        text=result.text,
+                        words=result.words or [],
+                        max_chars=17.0,
+                        progress_callback=options.progress_callback,
+                    )
+                    if tp_result:
+                        subtitle_text = tp_result.srt_text
                     t_llm_end = time.perf_counter()
                     logger.info(
                         "llm_two_pass_done provider=%s audio=%s duration_sec=%.3f",
@@ -271,7 +272,7 @@ def execute_poc_run(
                         except Exception as exc:
                             logger.warning("Pass5処理に失敗しました: %s", exc)
 
-                if subtitle_text:
+                if subtitle_text is not None:
                     subtitle_path.parent.mkdir(parents=True, exist_ok=True)
                     subtitle_path.write_text(subtitle_text, encoding="utf-8")
                     logger.info("SRTを保存しました: %s", subtitle_path)

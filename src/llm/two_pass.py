@@ -174,11 +174,19 @@ def _call_llm_with_parse(
                     exc,
                 )
                 continue
+
+            # リトライしない（or 最終試行）場合は、raw ログにエラー内容も残す。
+            err_text = f"[API ERROR] pass={pass_label} model={model_override or '-'}: {exc}\n"
+            if log_sink is not None:
+                log_sink._append_raw_log(pass_label, err_text)
+            else:
+                _log_raw_response(pass_label, err_text)
+
             # リトライ不可または最終試行で失敗
             if soft_fail:
                 logger.error("%s failed with non-retryable error: %s", pass_label, exc)
                 return None, None
-            raise
+            raise FormatterError(f"{pass_label} failed (model={model_override or '-'}): {exc}") from exc
 
         # ログ集約先があればそこへ、なければ旧方式で単発ログ
         if log_sink is not None:
@@ -194,7 +202,32 @@ def _call_llm_with_parse(
     if soft_fail:
         logger.error("%s parse failed after %d attempts; falling back", pass_label, retries)
         return None, None
-    raise last_exc  # type: ignore[misc]
+    raise FormatterError(f"{pass_label} parse failed (model={model_override or '-'}): {last_exc}") from last_exc  # type: ignore[misc]
+
+
+def _looks_like_context_limit_error(message: str) -> bool:
+    msg = message.lower()
+    return any(
+        token in msg
+        for token in [
+            "context length",
+            "maximum context",
+            "context_length_exceeded",
+            "too many tokens",
+            "token limit",
+            "prompt is too long",
+            "request too large",
+            "exceeds the maximum",
+            "max tokens",
+        ]
+    )
+
+
+def _looks_like_model_not_found_error(message: str) -> bool:
+    msg = message.lower()
+    if "model" not in msg:
+        return False
+    return any(token in msg for token in ["not found", "does not exist", "unknown model", "model_not_found"])
 
 
 def _has_full_word_coverage(lines: Sequence["LineRange"], words: Sequence[WordTimestamp]) -> bool:
@@ -266,6 +299,7 @@ class TwoPassFormatter:
             self.pass3_model = pass3_model or settings.wf2_pass3_model or settings.pass3_model
             # Pass4 は settings.wf2_pass4_model → settings.pass4_model の順に参照
             self.pass4_model = pass4_model or settings.wf2_pass4_model or settings.pass4_model
+            self._wf2_pass1_fallback_model = settings.pass1_model
         else:
             self.pass1_model = pass1_model or settings.pass1_model
             self.pass2_model = pass2_model or settings.pass2_model
@@ -273,6 +307,7 @@ class TwoPassFormatter:
             # Pass4 は settings.pass4_model（= LLM_PASS4_MODEL or LLM_PASS3_MODEL）を尊重しつつ、
             # プロファイルやCLIからの引数で上書きできるようにする。
             self.pass4_model = pass4_model or settings.pass4_model
+            self._wf2_pass1_fallback_model = None
         # 辞書（Glossary）: None の場合はデフォルト辞書を利用する
         self.glossary_terms = (
             list(DEFAULT_GLOSSARY_TERMS)
@@ -377,15 +412,46 @@ class TwoPassFormatter:
             pass1_prompt = self._build_pass1_prompt(text, words)
             logger.debug("Calling LLM for Pass 1. Prompt length: %d", len(pass1_prompt))
             t_p1_start = time.perf_counter()
-            raw1, parsed1 = _call_llm_with_parse(
-                self._call_llm,
-                pass_label="pass1",
-                prompt=pass1_prompt,
-                model_override=self.pass1_model,
-                retries=2,
-                soft_fail=False,
-                log_sink=self,
-            )
+            try:
+                raw1, parsed1 = _call_llm_with_parse(
+                    self._call_llm,
+                    pass_label="pass1",
+                    prompt=pass1_prompt,
+                    model_override=self.pass1_model,
+                    retries=2,
+                    soft_fail=False,
+                    log_sink=self,
+                )
+            except FormatterError as exc:
+                fallback_model = self._wf2_pass1_fallback_model
+                if (
+                    self.workflow == "workflow2"
+                    and fallback_model
+                    and fallback_model != self.pass1_model
+                    and (
+                        _looks_like_context_limit_error(str(exc))
+                        or _looks_like_model_not_found_error(str(exc))
+                    )
+                ):
+                    logger.warning(
+                        "pass1 failed with model=%s; retrying with fallback model=%s: %s",
+                        self.pass1_model,
+                        fallback_model,
+                        exc,
+                    )
+                    if progress_callback:
+                        progress_callback("LLM Pass 1（フォールバック）", 45)
+                    raw1, parsed1 = _call_llm_with_parse(
+                        self._call_llm,
+                        pass_label="pass1",
+                        prompt=pass1_prompt,
+                        model_override=fallback_model,
+                        retries=1,
+                        soft_fail=False,
+                        log_sink=self,
+                    )
+                else:
+                    raise
             t_p1_end = time.perf_counter()
             record_pass_time(self.run_id, "pass1", t_p1_end - t_p1_start)
             ops = _parse_operations(parsed1)
