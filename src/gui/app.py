@@ -115,7 +115,7 @@ class MainWindow:
         if running_workflows:
             result = messagebox.askyesno(
                 "確認", 
-                f"ワークフロー {', '.join(running_workflows)} が実行中です。\n終了してもよろしいですか？"
+                f"スロット {', '.join(running_workflows)} が実行中です。\n終了してもよろしいですか？"
             )
             if not result:
                 return

@@ -73,7 +73,7 @@ class GuiController:
         # 既存のワークフローが実行中かチェック
         with self._lock:
             if workflow_id in self.workflows and self.workflows[workflow_id].is_running:
-                self._notify(on_error, RuntimeError(f"ワークフロー {workflow_id} は既に実行中です"))
+                self._notify(on_error, RuntimeError(f"スロット {workflow_id} は既に実行中です"))
                 return
 
         def worker() -> None:

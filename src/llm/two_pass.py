@@ -130,10 +130,6 @@ def _apply_operations(words: Sequence[WordTimestamp], ops: Sequence[EditOperatio
     return result
 
 
-def _build_indexed_words(words: Sequence[WordTimestamp]) -> str:
-    return "\n".join(f"{i}: {w.word}" for i, w in enumerate(words))
-
-
 def _safe_trim_json_response(text: str) -> Any:
     try:
         return _extract_json(text)

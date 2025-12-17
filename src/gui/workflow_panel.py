@@ -11,6 +11,7 @@ from typing import Callable, Dict, Any
 
 from src.config.settings import get_settings
 from src.llm.profiles import get_profile, list_profiles, list_models_by_provider
+from src.llm.workflows.registry import list_workflows
 from src.gui.config import get_config
 
 
@@ -68,7 +69,7 @@ class WorkflowPanel(ttk.Frame):
         # フレームのタイトル
         title_frame = ttk.Frame(self)
         title_frame.pack(fill=tk.X, pady=(0, 8))
-        ttk.Label(title_frame, text=f"ワークフロー {workflow_id}", font=("", 10, "bold")).pack(side=tk.LEFT)
+        ttk.Label(title_frame, text=f"スロット {workflow_id}", font=("", 10, "bold")).pack(side=tk.LEFT)
         
         self._build_widgets()
         self._load_initial_settings()
@@ -139,7 +140,6 @@ class WorkflowPanel(ttk.Frame):
         workflow_row = ttk.Frame(options_frame)
         workflow_row.pack(fill=tk.X, pady=(2, 2))
         ttk.Label(workflow_row, text="ワークフロー:").pack(side=tk.LEFT)
-        from src.llm.workflows.registry import list_workflows
         workflow_options = [wf.slug for wf in list_workflows()]
         workflow_combo = ttk.Combobox(
             workflow_row,
