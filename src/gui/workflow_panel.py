@@ -495,6 +495,7 @@ class WorkflowPanel(ttk.Frame):
             total_completion_tokens = int(metrics.get("total_completion_tokens") or 0)
             total_tokens = metrics.get("total_tokens") or 0
             total_cost = float(metrics.get("total_cost_usd") or 0.0)
+            cost_available = bool(metrics.get("cost_available")) if "cost_available" in metrics else True
             total_elapsed_sec = float(metrics.get("total_elapsed_sec") or 0.0)
             metrics_files_found = int(metrics.get("metrics_files_found") or 0)
             time_str = self._format_elapsed(total_elapsed_sec)
@@ -518,10 +519,13 @@ class WorkflowPanel(ttk.Frame):
                 return
 
             suffix = ""
-            if int(total_tokens) <= 0 and total_cost <= 0.0:
+            if int(total_tokens) <= 0:
                 suffix = "（LLM未実行/usage未取得の可能性）"
+            elif not cost_available:
+                suffix = "（単価未設定）"
+            cost_str = f"${total_cost:.3f}" if cost_available else "-"
             lines.append(
-                f"トークン: {total_prompt_tokens} / {total_completion_tokens} / {int(total_tokens)} / コスト: ${total_cost:.3f}{suffix}"
+                f"トークン: {total_prompt_tokens} / {total_completion_tokens} / {int(total_tokens)} / コスト: {cost_str}{suffix}"
             )
 
             per_runner = metrics.get("per_runner") or {}

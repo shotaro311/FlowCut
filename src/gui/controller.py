@@ -311,6 +311,7 @@ class GuiController:
         total_completion_tokens = 0
         total_tokens = 0
         total_cost = 0.0
+        cost_available = False
         metrics_files_found = 0
         per_runner: dict = {}
 
@@ -360,9 +361,16 @@ class GuiController:
                             "cost_input_usd": entry.get("cost_input_usd"),
                             "cost_output_usd": entry.get("cost_output_usd"),
                         }
+                        if (
+                            isinstance(entry.get("cost_total_usd"), (int, float))
+                            or isinstance(entry.get("cost_input_usd"), (int, float))
+                            or isinstance(entry.get("cost_output_usd"), (int, float))
+                        ):
+                            cost_available = True
                 cost = data.get("run_total_cost_usd")
                 if isinstance(cost, (int, float)) and float(cost) > 0:
                     total_cost += float(cost)
+                    cost_available = True
                 else:
                     # run_total_cost_usd が無い/0 の場合は、パス別コストの合計で代替する
                     if isinstance(llm_tokens, dict):
@@ -372,6 +380,7 @@ class GuiController:
                             entry_cost = entry.get("cost_total_usd")
                             if isinstance(entry_cost, (int, float)):
                                 total_cost += float(entry_cost)
+                                cost_available = True
 
                 # GUI表示用の内訳（runnerごと）
                 transcribe_time = stage_timings_time.get("transcribe_sec") if isinstance(stage_timings_time, dict) else None
@@ -389,6 +398,7 @@ class GuiController:
             "total_completion_tokens": total_completion_tokens,
             "total_tokens": total_tokens,
             "total_cost_usd": total_cost,
+            "cost_available": cost_available,
             "total_elapsed_sec": total_elapsed_sec,
             "metrics_files_found": metrics_files_found,
             "per_runner": per_runner,
