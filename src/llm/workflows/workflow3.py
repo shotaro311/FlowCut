@@ -90,6 +90,39 @@ def build_pass3_prompt(lines, words, issues, glossary_terms) -> str:
     )
 
 
+def build_pass2to4_prompt(words: Sequence, max_chars: float, glossary_terms) -> str:
+    indexed = build_indexed_words(words)
+    glossary_text = "\n".join(glossary_terms or [])
+    max_chars_int = int(max_chars)
+    return (
+        "# Role\n"
+        "あなたはプロの字幕編集者です。\n"
+        "以下の単語リスト（index:word）を、字幕用の行にまとめてください。\n\n"
+        "# 必須条件（最重要）\n"
+        "- 単語の順序は変えない。単語を落とさない。重複させない。\n"
+        f"- 全角 {max_chars_int} 文字以内（5〜{max_chars_int} 文字）で行を作る。\n"
+        "- from/to は単語indexの範囲（両端含む）。0 から最後の index まで漏れなく連続でカバーする。\n"
+        "- 行末の句読点（、。）は削除する（文中は必要なら残してよい）。\n"
+        "- 誤字・脱字は最小限に修正してよい（意訳・要約は禁止）。\n"
+        "- Glossary がある場合は表記を揃える。\n\n"
+        "# 禁止\n"
+        "- 説明文、コードフェンス、前後テキストの付与\n"
+        "- JSON以外の出力\n\n"
+        "# Glossary\n"
+        f"{glossary_text}\n\n"
+        "# Input\n"
+        f"単語リスト（index:word）:\n{indexed}\n\n"
+        "# Output\n"
+        "以下のJSONのみを返してください（説明・コードフェンス禁止）:\n"
+        "{\n"
+        '  "lines": [\n'
+        '    {"from": 0, "to": 10, "text": "...."},\n'
+        '    {"from": 11, "to": 25, "text": "...."}\n'
+        "  ]\n"
+        "}\n"
+    )
+
+
 WORKFLOW = WorkflowDefinition(
     slug="workflow3",
     label="workflow3: カスタム",
@@ -98,8 +131,10 @@ WORKFLOW = WorkflowDefinition(
     optimized_pass4=False,
     allow_pass3_range_change=True,
     pass1_fallback_enabled=False,
+    two_call_enabled=True,
     pass1_prompt=build_pass1_prompt,
     pass2_prompt=build_pass2_prompt,
     pass3_prompt=build_pass3_prompt,
     pass4_prompt=DEFAULT_PASS4_PROMPT,
+    pass2to4_prompt=build_pass2to4_prompt,
 )

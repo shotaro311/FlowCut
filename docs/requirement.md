@@ -176,6 +176,7 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
     *   `src/llm/workflows/` 配下に workflow ごとのプロンプトと挙動を定義する（`workflow1.py` / `workflow2.py` / `workflow3.py`）。
     *   GUI/CLI は `workflow1|2|3` を選択して実行する。
     *   workflow ファイルを削除しても他の workflow に影響しない（不明な workflow が指定された場合は workflow1 にフォールバック）。
+    *   workflow3 は実験的に **LLM呼び出しを2回（Pass1 + Pass2-4統合）**で動かせる（品質条件を満たさない場合は従来フローへフォールバック）。
 *   **プロンプトの役割（two-pass）:**
     1.  パス1: 置換/削除のみを operations 配列(JSON)で返す。挿入禁止・順序を変えない。
     2.  パス2: 17文字以内の自然な行分割を `{"lines":[{"from":0,"to":10,"text":"..."}]}` 形式で返す。

@@ -261,6 +261,25 @@ def _has_full_word_coverage(lines: Sequence["LineRange"], words: Sequence[WordTi
     return all(covered)
 
 
+def _has_contiguous_word_coverage(lines: Sequence["LineRange"], n_words: int) -> bool:
+    """Return True if lines cover 0..n_words-1 exactly once without gaps/overlaps."""
+    if not lines:
+        return False
+    if n_words <= 0:
+        return False
+    ordered = sorted(lines, key=lambda l: (l.start_idx, l.end_idx))
+    if ordered[0].start_idx != 0:
+        return False
+    prev_end = -1
+    for line in ordered:
+        if line.start_idx < 0 or line.end_idx >= n_words or line.start_idx > line.end_idx:
+            return False
+        if line.start_idx != prev_end + 1:
+            return False
+        prev_end = line.end_idx
+    return prev_end == n_words - 1
+
+
 def _has_same_line_ranges(before: Sequence["LineRange"], after: Sequence["LineRange"]) -> bool:
     """Return True if line ranges (from/to) are identical and in the same order."""
     if len(before) != len(after):
@@ -464,6 +483,52 @@ class TwoPassFormatter:
             if not updated_words:
                 # If all words deleted, return empty result (valid case)
                 return TwoPassResult(segments=[])
+
+            if self.workflow_def.two_call_enabled and self.workflow_def.pass2to4_prompt is not None:
+                try:
+                    from src.llm.validators import detect_issues
+
+                    logger.info("two-pass: pass2-4 combined start (words=%d)", len(updated_words))
+                    if progress_callback:
+                        progress_callback("LLM Pass 2-4（統合）", 80)
+
+                    combined_prompt = self.workflow_def.pass2to4_prompt(
+                        updated_words,
+                        max_chars,
+                        self.glossary_terms,
+                    )
+                    logger.debug("Calling LLM for Pass 2-4 (combined). Prompt length: %d", len(combined_prompt))
+                    t_p24_start = time.perf_counter()
+                    raw24, parsed24 = _call_llm_with_parse(
+                        self._call_llm,
+                        pass_label="pass2to4",
+                        prompt=combined_prompt,
+                        model_override=self.pass2_model,
+                        retries=2,
+                        soft_fail=False,
+                        log_sink=self,
+                    )
+                    t_p24_end = time.perf_counter()
+                    record_pass_time(self.run_id, "pass2to4", t_p24_end - t_p24_start)
+
+                    combined_lines = _parse_lines(parsed24)
+                    combined_lines = sorted(combined_lines, key=lambda l: (l.start_idx, l.end_idx))
+                    if not combined_lines:
+                        raise FormatterError("統合結果（lines）が空です")
+                    if any(len(line.text) < 5 or len(line.text) > int(max_chars) for line in combined_lines):
+                        raise FormatterError("統合結果に文字数違反の行があります")
+                    if not _has_contiguous_word_coverage(combined_lines, len(updated_words)):
+                        raise FormatterError("統合結果の範囲（from/to）が不正です")
+
+                    issues = detect_issues(combined_lines, updated_words)
+                    if issues:
+                        raise FormatterError(f"統合結果に修正対象が残っています: {len(issues)} issues")
+
+                    segments = self._ranges_to_segments(updated_words, combined_lines)
+                    logger.info("two-pass: completed (two-call, segments=%d)", len(segments))
+                    return TwoPassResult(segments=segments)
+                except Exception as exc:
+                    logger.warning("two-pass: combined mode failed; falling back to legacy flow: %s", exc)
 
             logger.info("two-pass: pass2 start (words=%d)", len(updated_words))
             # Pass2: line splits

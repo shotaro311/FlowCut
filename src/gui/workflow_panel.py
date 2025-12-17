@@ -543,9 +543,23 @@ class WorkflowPanel(ttk.Frame):
 
                     lines.append(f"[{slug}] 文字起こし: {transcribe_time} / LLM合計: {llm_two_pass_time}")
 
-                    pass_labels = ["pass1", "pass2", "pass3", "pass4"]
-                    if pass5_enabled:
-                        pass_labels.append("pass5")
+                    available_labels: set[str] = set()
+                    available_labels.update(durations.keys())
+                    available_labels.update(pass_metrics.keys())
+                    preferred_order = [
+                        "pass1",
+                        "pass2to4",
+                        "pass2",
+                        "pass3",
+                        "pass4",
+                        "pass4_fast",
+                        "pass4_fallback",
+                        "pass5",
+                    ]
+                    pass_labels = [label for label in preferred_order if label in available_labels]
+                    for label in sorted(available_labels):
+                        if label not in pass_labels:
+                            pass_labels.append(label)
 
                     for label in pass_labels:
                         duration = durations.get(label)
@@ -562,7 +576,14 @@ class WorkflowPanel(ttk.Frame):
                             token_str = "- / - / -"
                         cost = usage.get("cost_total_usd")
                         cost_str = f"${float(cost):.3f}" if isinstance(cost, (int, float)) else "-"
-                        pass_name = label.replace("pass", "Pass")
+                        if label == "pass2to4":
+                            pass_name = "Pass2-4"
+                        elif label == "pass4_fast":
+                            pass_name = "Pass4（fast）"
+                        elif label == "pass4_fallback":
+                            pass_name = "Pass4（fallback）"
+                        else:
+                            pass_name = label.replace("pass", "Pass")
                         lines.append(f"[{slug}] {pass_name}: {duration_str} / トークン: {token_str} / コスト: {cost_str}")
 
             self.metrics_var.set("\n".join(lines))

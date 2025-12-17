@@ -14,6 +14,7 @@ Pass3PromptFn = Callable[
     [Sequence["LineRange"], Sequence["WordTimestamp"], Any, Sequence[str]], str
 ]
 Pass4PromptFn = Callable[["LineRange", Sequence["WordTimestamp"]], str]
+Pass2to4PromptFn = Callable[[Sequence["WordTimestamp"], float, Sequence[str]], str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,8 +26,9 @@ class WorkflowDefinition:
     optimized_pass4: bool = False
     allow_pass3_range_change: bool = True
     pass1_fallback_enabled: bool = False
+    two_call_enabled: bool = False
     pass1_prompt: Pass1PromptFn | None = None
     pass2_prompt: Pass2PromptFn | None = None
     pass3_prompt: Pass3PromptFn | None = None
     pass4_prompt: Pass4PromptFn | None = None
-
+    pass2to4_prompt: Pass2to4PromptFn | None = None
