@@ -71,6 +71,36 @@ class GuiConfig:
         self._config["llm_profile"] = profile
         self.save_config()
 
+    def get_llm_provider(self) -> str | None:
+        """LLMプロバイダーの設定を取得する。"""
+        provider = self._config.get("llm_provider")
+        if isinstance(provider, str) and provider.strip():
+            return provider.strip().lower()
+        return None
+
+    def set_llm_provider(self, provider: str | None) -> None:
+        """LLMプロバイダーの設定を保存する。"""
+        if provider is None or not provider.strip():
+            self._config.pop("llm_provider", None)
+        else:
+            self._config["llm_provider"] = provider.strip().lower()
+        self.save_config()
+
+    def get_pass5_provider(self) -> str | None:
+        """Pass5で使用するLLMプロバイダーの設定を取得する。"""
+        provider = self._config.get("pass5_provider")
+        if isinstance(provider, str) and provider.strip():
+            return provider.strip().lower()
+        return None
+
+    def set_pass5_provider(self, provider: str | None) -> None:
+        """Pass5で使用するLLMプロバイダーの設定を保存する。"""
+        if provider is None or not provider.strip():
+            self._config.pop("pass5_provider", None)
+        else:
+            self._config["pass5_provider"] = provider.strip().lower()
+        self.save_config()
+
     def get_window_geometry(self) -> str | None:
         """ウィンドウ位置とサイズの設定を取得する。"""
         return self._config.get("window_geometry")
@@ -164,11 +194,11 @@ class GuiConfig:
 
     def get_start_delay(self) -> float:
         """開始遅延の設定を取得する。"""
-        delay = self._config.get("start_delay", 0.0)
+        delay = self._config.get("start_delay", 0.2)
         try:
             return float(delay)
         except (TypeError, ValueError):
-            return 0.0
+            return 0.2
 
     def set_start_delay(self, delay: float) -> None:
         """開始遅延の設定を保存する。"""

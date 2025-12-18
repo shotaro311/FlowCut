@@ -64,6 +64,7 @@ class PocRunOptions:
     keep_extracted_audio: bool = False
     enable_pass5: bool = False
     pass5_max_chars: int = 17
+    pass5_provider: str | None = None
     pass5_model: str | None = None
     progress_callback: Callable[[str, int], None] | None = None
     save_logs: bool = False
@@ -262,9 +263,17 @@ def execute_poc_run(
 
                             if options.progress_callback:
                                 options.progress_callback("LLM Pass 5", 98)
-                            model_override = options.pass5_model or options.llm_pass4_model or options.llm_pass3_model
+                            pass5_provider = options.pass5_provider or options.llm_provider
+                            if pass5_provider is None:
+                                raise ValueError("pass5_provider が未設定です")
+                            if options.pass5_model:
+                                model_override = options.pass5_model
+                            elif options.pass5_provider and options.pass5_provider != options.llm_provider:
+                                model_override = None
+                            else:
+                                model_override = options.llm_pass4_model or options.llm_pass3_model
                             subtitle_text = Pass5Processor(
-                                provider=options.llm_provider,
+                                provider=pass5_provider,
                                 max_chars=options.pass5_max_chars,
                                 model_override=model_override,
                                 run_id=run_id,
@@ -475,6 +484,7 @@ def prepare_resume_run(
         save_logs=bool(option_meta.get("save_logs", base_options.save_logs)),
         enable_pass5=option_meta.get("enable_pass5", base_options.enable_pass5),
         pass5_max_chars=option_meta.get("pass5_max_chars", base_options.pass5_max_chars),
+        pass5_provider=option_meta.get("pass5_provider") or base_options.pass5_provider,
         pass5_model=option_meta.get("pass5_model"),
     )
     return record, audio_files, [record.model], resume_options
@@ -588,6 +598,7 @@ def _build_progress_metadata(
         "save_logs": options.save_logs,
         "enable_pass5": options.enable_pass5,
         "pass5_max_chars": options.pass5_max_chars,
+        "pass5_provider": options.pass5_provider,
         "pass5_model": options.pass5_model,
     }
     if options.resume_source:

@@ -58,6 +58,7 @@ class GuiController:
         keep_extracted_audio: bool = False,
         enable_pass5: bool = False,
         pass5_max_chars: int = 17,
+        pass5_provider: str | None = None,
         pass5_model: str | None = None,
         save_logs: bool = False,
         on_start: Callable[[], None] | None = None,
@@ -104,6 +105,7 @@ class GuiController:
                         keep_extracted_audio=keep_extracted_audio,
                         enable_pass5=enable_pass5,
                         pass5_max_chars=pass5_max_chars,
+                        pass5_provider=pass5_provider,
                         pass5_model=pass5_model,
                         save_logs=save_logs,
                         progress_callback=safe_progress_callback,
@@ -133,6 +135,7 @@ class GuiController:
                     metrics["processing_elapsed_sec"] = processing_elapsed_sec
                     metrics["pass5_enabled"] = bool(options.enable_pass5)
                     metrics["pass5_max_chars"] = int(options.pass5_max_chars)
+                    metrics["pass5_provider"] = options.pass5_provider
                     metrics["pass5_model"] = options.pass5_model
 
                     self._notify(on_success, result_paths, metrics)
@@ -171,6 +174,7 @@ class GuiController:
         keep_extracted_audio: bool = False,
         enable_pass5: bool = False,
         pass5_max_chars: int = 17,
+        pass5_provider: str | None = None,
         pass5_model: str | None = None,
         save_logs: bool = False,
         progress_callback: Callable[[str, int], None] | None = None,
@@ -229,6 +233,7 @@ class GuiController:
             keep_extracted_audio=bool(keep_extracted_audio),
             enable_pass5=bool(enable_pass5),
             pass5_max_chars=int(pass5_max_chars),
+            pass5_provider=(pass5_provider.strip().lower() if isinstance(pass5_provider, str) and pass5_provider.strip() else None),
             pass5_model=pass5_model,
             progress_callback=progress_callback,
             save_logs=save_logs,

@@ -7,11 +7,10 @@ import sys
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from typing import Callable, Dict, Any
 
 from src.config.settings import get_settings
-from src.llm.profiles import get_profile, list_profiles, list_models_by_provider
-from src.llm.workflows.registry import list_workflows
+from src.llm.profiles import get_profile, list_models_by_provider, reload_profiles
+from src.llm.workflows.registry import get_workflow, list_workflows
 from src.gui.config import get_config
 
 
@@ -44,14 +43,12 @@ class WorkflowPanel(ttk.Frame):
         self.rolling_timer_id = None
         
         # LLM関連変数
-        self.llm_provider_var = tk.StringVar()
-        self.llm_profile_var = tk.StringVar()
         self.workflow_var = tk.StringVar(value="workflow1")
         self.pass1_model_var = tk.StringVar()
         self.pass2_model_var = tk.StringVar()
         self.pass3_model_var = tk.StringVar()
         self.pass4_model_var = tk.StringVar()
-        self.start_delay_var = tk.StringVar(value="0.0")
+        self.start_delay_var = tk.StringVar(value="0.2")
         self.advanced_visible = tk.BooleanVar(value=False)
         self.save_logs_var = tk.BooleanVar(value=False)
         self.keep_extracted_audio_var = tk.BooleanVar(value=False)
@@ -60,8 +57,7 @@ class WorkflowPanel(ttk.Frame):
         self.pass5_max_chars_var = tk.StringVar(value="17")
         self.pass5_model_var = tk.StringVar()
         
-        # プロファイルとモデル
-        self._profiles = list_profiles()
+        # モデル一覧
         self._models_by_provider = list_models_by_provider()
         self._pass_model_combos: list[ttk.Combobox] = []
         self._pass5_model_combo: ttk.Combobox | None = None
@@ -115,30 +111,9 @@ class WorkflowPanel(ttk.Frame):
         options_frame = ttk.LabelFrame(self, text="LLMオプション")
         options_frame.pack(fill=tk.X, pady=(0, 8))
         
-        # プロバイダー表示
-        provider_row = ttk.Frame(options_frame)
-        provider_row.pack(fill=tk.X, pady=(4, 2))
-        ttk.Label(provider_row, text="LLMプロバイダー:").pack(side=tk.LEFT)
-        ttk.Label(provider_row, textvariable=self.llm_provider_var).pack(side=tk.LEFT, padx=(4, 0))
-        
-        # プロファイル選択
-        profile_row = ttk.Frame(options_frame)
-        profile_row.pack(fill=tk.X, pady=(2, 2))
-        ttk.Label(profile_row, text="モデルプリセット:").pack(side=tk.LEFT)
-        profile_names = sorted(self._profiles.keys())
-        profile_combo = ttk.Combobox(
-            profile_row,
-            textvariable=self.llm_profile_var,
-            values=profile_names,
-            state="readonly",
-            width=16,
-        )
-        profile_combo.pack(side=tk.LEFT, padx=(4, 0))
-        profile_combo.bind("<<ComboboxSelected>>", self._on_profile_changed)
-        
         # ワークフロー選択
         workflow_row = ttk.Frame(options_frame)
-        workflow_row.pack(fill=tk.X, pady=(2, 2))
+        workflow_row.pack(fill=tk.X, pady=(4, 2))
         ttk.Label(workflow_row, text="ワークフロー:").pack(side=tk.LEFT)
         workflow_options = [wf.slug for wf in list_workflows()]
         workflow_combo = ttk.Combobox(
@@ -200,23 +175,9 @@ class WorkflowPanel(ttk.Frame):
         
         # 詳細設定エリア
         self.advanced_frame = ttk.Frame(options_frame)
-        for idx, (label_text, var) in enumerate([
-            ("Pass1:", self.pass1_model_var),
-            ("Pass2:", self.pass2_model_var),
-            ("Pass3:", self.pass3_model_var),
-            ("Pass4:", self.pass4_model_var),
-        ]):
-            row = ttk.Frame(self.advanced_frame)
-            row.pack(fill=tk.X, pady=(1, 1))
-            ttk.Label(row, text=label_text, width=8).pack(side=tk.LEFT)
-            combo = ttk.Combobox(
-                row,
-                textvariable=var,
-                values=self._get_models_for_current_provider(),
-                state="readonly",
-            )
-            combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
-            self._pass_model_combos.append(combo)
+        self._advanced_pass_models_frame = ttk.Frame(self.advanced_frame)
+        self._advanced_pass_models_frame.pack(fill=tk.X)
+        self._render_advanced_pass_models()
 
         delay_row = ttk.Frame(self.advanced_frame)
         delay_row.pack(fill=tk.X, pady=(2, 2))
@@ -238,7 +199,7 @@ class WorkflowPanel(ttk.Frame):
         self._pass5_model_combo = ttk.Combobox(
             pass5_model_row,
             textvariable=self.pass5_model_var,
-            values=self._get_models_for_current_provider(),
+            values=self._get_all_models(),
             state="readonly",
         )
         self._pass5_model_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -314,20 +275,67 @@ class WorkflowPanel(ttk.Frame):
 
     def _load_initial_settings(self) -> None:
         """初期設定を読み込む。"""
-        # プロファイル設定
-        if self._profiles:
-            saved_profile = self.config.get_llm_profile()
-            if saved_profile and saved_profile in self._profiles:
-                initial_profile = saved_profile
-            else:
-                initial_profile = "default" if "default" in self._profiles else sorted(self._profiles.keys())[0]
-            self.llm_profile_var.set(initial_profile)
-            self.llm_provider_var.set(self._profiles[initial_profile].provider or "google")
-            self._apply_profile_to_pass_models(initial_profile)
-        else:
-            self.llm_provider_var.set("google")
-
         self.workflow_var.set(self.config.get_workflow())
+
+        all_models = set(self._get_all_models())
+        saved_pass1 = self.config.get_pass_model("pass1", "").strip()
+        saved_pass2 = self.config.get_pass_model("pass2", "").strip()
+        saved_pass3 = self.config.get_pass_model("pass3", "").strip()
+        saved_pass4 = self.config.get_pass_model("pass4", "").strip()
+        saved_pass5 = (self.config.get_pass5_model() or "").strip()
+
+        if saved_pass1 not in all_models:
+            saved_pass1 = ""
+        if saved_pass2 not in all_models:
+            saved_pass2 = ""
+        if saved_pass3 not in all_models:
+            saved_pass3 = ""
+        if saved_pass4 not in all_models:
+            saved_pass4 = ""
+        if saved_pass5 and saved_pass5 not in all_models:
+            saved_pass5 = ""
+
+        providers = sorted(self._models_by_provider.keys())
+        provider = self._get_provider_for_model(saved_pass1) or (self.config.get_llm_provider() or "").strip().lower()
+        if provider not in providers:
+            provider = "google" if "google" in providers else (providers[0] if providers else "google")
+
+        pass1 = saved_pass1 or (self._get_default_model_for_provider(provider, "pass1") or "")
+        if pass1 and pass1 not in all_models:
+            pass1 = ""
+        if not pass1 and all_models:
+            pass1 = sorted(all_models)[0]
+        self.pass1_model_var.set(pass1)
+        if pass1:
+            self.config.set_pass_model("pass1", pass1)
+
+        main_provider = self._get_provider_for_model(pass1) or provider
+        self.config.set_llm_provider(main_provider)
+
+        def pick(pass_name: str, saved: str) -> str:
+            if saved and self._get_provider_for_model(saved) == main_provider:
+                return saved
+            return self._get_default_model_for_provider(main_provider, pass_name) or ""
+
+        pass2 = pick("pass2", saved_pass2)
+        pass3 = pick("pass3", saved_pass3)
+        pass4 = pick("pass4", saved_pass4)
+        self.pass2_model_var.set(pass2)
+        self.pass3_model_var.set(pass3)
+        self.pass4_model_var.set(pass4)
+        if pass2:
+            self.config.set_pass_model("pass2", pass2)
+        if pass3:
+            self.config.set_pass_model("pass3", pass3)
+        if pass4:
+            self.config.set_pass_model("pass4", pass4)
+
+        self.pass5_model_var.set(saved_pass5)
+        pass5_provider = self._get_provider_for_model(saved_pass5) if saved_pass5 else main_provider
+        self.config.set_pass5_provider(pass5_provider)
+
+        self._render_advanced_pass_models()
+        self._refresh_advanced_model_choices()
         self.start_delay_var.set(str(self.config.get_start_delay()))
         self.save_logs_var.set(bool(self.config.get_save_logs()))
         self.keep_extracted_audio_var.set(bool(self.config.get_keep_extracted_audio()))
@@ -344,7 +352,6 @@ class WorkflowPanel(ttk.Frame):
 
         self.pass5_enabled_var.set(bool(self.config.get_pass5_enabled()))
         self.pass5_max_chars_var.set(str(self.config.get_pass5_max_chars()))
-        self.pass5_model_var.set(self.config.get_pass5_model() or "")
         self._toggle_pass5()
 
     def select_file(self) -> None:
@@ -397,16 +404,71 @@ class WorkflowPanel(ttk.Frame):
             messagebox.showinfo("情報", "このワークフローは実行中です。")
             return
 
-        provider = (self.llm_provider_var.get() or "").strip().lower()
-        if provider == "google":
-            # 失敗を握りつぶすと「完了なのにトークン/コストが0」のように見えるため、
-            # GUI側で先に設定漏れを検知して止める。
-            if not get_settings().llm.google_api_key and not os.getenv("GOOGLE_API_KEY"):
+        pass1_model = (self.pass1_model_var.get() or "").strip()
+        provider = self._get_provider_for_model(pass1_model)
+        if not provider:
+            messagebox.showerror("エラー", f"Pass1のモデルからプロバイダーを判定できません: {pass1_model}")
+            return
+        self.config.set_llm_provider(provider)
+
+        model_vars: dict[str, tk.StringVar] = {
+            "pass1": self.pass1_model_var,
+            "pass2": self.pass2_model_var,
+            "pass3": self.pass3_model_var,
+            "pass4": self.pass4_model_var,
+        }
+        for pass_name in self._get_active_pass_names():
+            if pass_name == "pass1":
+                continue
+            model = (model_vars[pass_name].get() or "").strip()
+            if model and self._get_provider_for_model(model) != provider:
                 messagebox.showerror(
                     "エラー",
-                    "Google APIキーが未設定です。\n画面上部の「API設定」から設定してください。",
+                    "Pass1と同じプロバイダーのモデルを選択してください。\n"
+                    f"Pass1: {pass1_model}（{provider}）\n"
+                    f"{pass_name}: {model}",
                 )
                 return
+
+        settings = get_settings().llm
+
+        enable_pass5 = bool(self.pass5_enabled_var.get())
+        pass5_model = (self.pass5_model_var.get() or "").strip() or None
+        pass5_provider = provider
+        if enable_pass5:
+            if pass5_model:
+                inferred = self._get_provider_for_model(pass5_model)
+                if not inferred:
+                    messagebox.showerror("エラー", f"Pass5のモデルからプロバイダーを判定できません: {pass5_model}")
+                    return
+                pass5_provider = inferred
+
+        for check_provider in {provider, pass5_provider} if enable_pass5 else {provider}:
+            if check_provider == "google":
+                # 失敗を握りつぶすと「完了なのにトークン/コストが0」のように見えるため、
+                # GUI側で先に設定漏れを検知して止める。
+                if not settings.google_api_key and not os.getenv("GOOGLE_API_KEY"):
+                    messagebox.showerror(
+                        "エラー",
+                        "Google APIキーが未設定です。\n画面上部の「API設定」から設定してください。",
+                    )
+                    return
+            elif check_provider == "openai":
+                if not settings.openai_api_key and not os.getenv("OPENAI_API_KEY"):
+                    messagebox.showerror(
+                        "エラー",
+                        "OpenAI APIキーが未設定です。\n画面上部の「API設定」から設定してください。",
+                    )
+                    return
+            elif check_provider == "anthropic":
+                if not settings.anthropic_api_key and not os.getenv("ANTHROPIC_API_KEY"):
+                    messagebox.showerror(
+                        "エラー",
+                        "Anthropic APIキーが未設定です。\n画面上部の「API設定」から設定してください。",
+                    )
+                    return
+
+        self.config.set_pass5_provider(pass5_provider)
         
         self._set_running_state(True)
         self.phase_var.set("準備中")
@@ -418,9 +480,7 @@ class WorkflowPanel(ttk.Frame):
         self.progress["value"] = 0
         self._start_rolling_animation()
 
-        enable_pass5 = bool(self.pass5_enabled_var.get())
         pass5_max_chars = 17
-        pass5_model = (self.pass5_model_var.get() or "").strip() or None
         if enable_pass5:
             try:
                 pass5_max_chars = int((self.pass5_max_chars_var.get() or "").strip())
@@ -442,8 +502,8 @@ class WorkflowPanel(ttk.Frame):
             workflow_id=self.workflow_id,
             audio_path=self.selected_file,
             subtitle_dir=self.output_dir,
-            llm_provider=self.llm_provider_var.get() or None,
-            llm_profile=self.llm_profile_var.get() or None,
+            llm_provider=provider,
+            llm_profile=None,
             workflow=self.workflow_var.get() or "workflow1",
             pass1_model=self.pass1_model_var.get().strip() or None,
             pass2_model=self.pass2_model_var.get().strip() or None,
@@ -453,6 +513,7 @@ class WorkflowPanel(ttk.Frame):
             keep_extracted_audio=bool(self.keep_extracted_audio_var.get()),
             enable_pass5=enable_pass5,
             pass5_max_chars=pass5_max_chars,
+            pass5_provider=pass5_provider if enable_pass5 else None,
             pass5_model=pass5_model,
             save_logs=bool(self.save_logs_var.get()),
             on_start=self._on_start,
@@ -646,15 +707,9 @@ class WorkflowPanel(ttk.Frame):
         if current_phase:
             self.phase_var.set(current_phase.rstrip('.').rstrip())
 
-    def _on_profile_changed(self, _event: object) -> None:
-        """プロファイル変更時の処理。"""
-        name = self.llm_profile_var.get()
-        if name:
-            self._apply_profile_to_pass_models(name)
-            self.config.set_llm_profile(name)
-
     def _on_workflow_changed(self, _event: object) -> None:
         self.config.set_workflow(self.workflow_var.get())
+        self._render_advanced_pass_models()
 
     def _on_start_delay_changed(self, _event: object) -> None:
         self.config.set_start_delay(self._get_start_delay())
@@ -683,49 +738,163 @@ class WorkflowPanel(ttk.Frame):
         else:
             self.pass5_frame.pack_forget()
 
-    def _get_models_for_current_provider(self) -> list[str]:
-        """現在のプロバイダーのモデル一覧を取得する。"""
-        provider = self.llm_provider_var.get() or ""
-        models = sorted(self._models_by_provider.get(provider, set()))
-        return models
+    def _get_all_models(self) -> list[str]:
+        models: set[str] = set()
+        for bucket in self._models_by_provider.values():
+            models.update(bucket)
+        return sorted(models)
 
-    def _apply_profile_to_pass_models(self, profile_name: str) -> None:
-        """プロファイルをPassモデルに適用する。"""
+    def _get_provider_for_model(self, model: str) -> str | None:
+        target = model.strip()
+        if not target:
+            return None
+        for provider, models in self._models_by_provider.items():
+            if target in models:
+                return provider
+        return None
+
+    def _get_default_model_for_provider(self, provider: str, pass_name: str) -> str | None:
+        models = set(self._models_by_provider.get(provider, set()))
+        if not models:
+            return None
+
+        profile_name = "default" if provider == "google" else provider
         profile = get_profile(profile_name)
-        if profile is None:
+        if profile is not None:
+            candidate_map = {
+                "pass1": profile.pass1_model,
+                "pass2": profile.pass2_model,
+                "pass3": profile.pass3_model,
+                "pass4": profile.pass4_model,
+            }
+            candidate = (candidate_map.get(pass_name) or "").strip()
+            if candidate and candidate in models:
+                return candidate
+
+        return sorted(models)[0]
+
+    def _get_active_pass_names(self) -> list[str]:
+        wf = get_workflow(self.workflow_var.get())
+        if wf.two_call_enabled and wf.pass2to4_prompt is not None:
+            return ["pass1", "pass2"]
+        return ["pass1", "pass2", "pass3", "pass4"]
+
+    def _sync_pass_models_to_provider(self, provider: str) -> None:
+        mapping: dict[str, tk.StringVar] = {
+            "pass1": self.pass1_model_var,
+            "pass2": self.pass2_model_var,
+            "pass3": self.pass3_model_var,
+            "pass4": self.pass4_model_var,
+        }
+        for pass_name in ("pass2", "pass3", "pass4"):
+            var = mapping[pass_name]
+            current = (var.get() or "").strip()
+            if current and self._get_provider_for_model(current) == provider:
+                continue
+            default = self._get_default_model_for_provider(provider, pass_name) or ""
+            if default:
+                var.set(default)
+                self.config.set_pass_model(pass_name, default)
+
+    def _on_pass_model_changed(self, pass_name: str) -> None:
+        mapping = {
+            "pass1": self.pass1_model_var,
+            "pass2": self.pass2_model_var,
+            "pass3": self.pass3_model_var,
+            "pass4": self.pass4_model_var,
+        }
+        var = mapping.get(pass_name)
+        if var is None:
             return
-        self.pass1_model_var.set(profile.pass1_model or "")
-        self.pass2_model_var.set(profile.pass2_model or "")
-        self.pass3_model_var.set(profile.pass3_model or "")
-        self.pass4_model_var.set(profile.pass4_model or "")
-        self._refresh_advanced_model_choices()
+        model = (var.get() or "").strip()
+        if model:
+            self.config.set_pass_model(pass_name, model)
+        if pass_name == "pass1" and model:
+            provider = self._get_provider_for_model(model)
+            if provider:
+                self.config.set_llm_provider(provider)
+                self.config.set_pass5_provider(self._get_provider_for_model(self.pass5_model_var.get()) or provider)
+                self._sync_pass_models_to_provider(provider)
 
     def reload_llm_profiles(self) -> None:
-        """LLMプロファイルとモデル一覧を再読み込みする。"""
-        self._profiles = list_profiles()
+        """LLMモデル一覧を再読み込みする。"""
+        reload_profiles()
         self._models_by_provider = list_models_by_provider()
-        current_profile = self.llm_profile_var.get()
-        if current_profile and current_profile in self._profiles:
-            provider = self._profiles[current_profile].provider or "google"
-            self.llm_provider_var.set(provider)
-            self._apply_profile_to_pass_models(current_profile)
-        elif self._profiles:
-            initial_profile = "default" if "default" in self._profiles else sorted(self._profiles.keys())[0]
-            self.llm_profile_var.set(initial_profile)
-            provider = self._profiles[initial_profile].provider or "google"
-            self.llm_provider_var.set(provider)
-            self._apply_profile_to_pass_models(initial_profile)
-        else:
-            self.llm_provider_var.set("")
+        all_models = set(self._get_all_models())
+
+        pass1 = (self.pass1_model_var.get() or "").strip()
+        if pass1 not in all_models:
+            pass1 = ""
+        if not pass1 and all_models:
+            providers = sorted(self._models_by_provider.keys())
+            provider = (self.config.get_llm_provider() or "").strip().lower()
+            if provider not in providers:
+                provider = "google" if "google" in providers else (providers[0] if providers else "google")
+            pass1 = self._get_default_model_for_provider(provider, "pass1") or sorted(all_models)[0]
+            self.pass1_model_var.set(pass1)
+            self.config.set_pass_model("pass1", pass1)
+
+        main_provider = self._get_provider_for_model(pass1) or self.config.get_llm_provider()
+        if main_provider:
+            self.config.set_llm_provider(main_provider)
+            self._sync_pass_models_to_provider(main_provider)
+
+        pass5_model = (self.pass5_model_var.get() or "").strip()
+        if pass5_model and pass5_model not in all_models:
+            self.pass5_model_var.set("")
+            self.config.set_pass5_model(None)
+            pass5_model = ""
+        self.config.set_pass5_provider(self._get_provider_for_model(pass5_model) or main_provider)
+
+        self._render_advanced_pass_models()
         self._refresh_advanced_model_choices()
 
     def _refresh_advanced_model_choices(self) -> None:
         """詳細設定のモデル選択肢を更新する。"""
-        models = self._get_models_for_current_provider()
+        models = self._get_all_models()
         for combo in self._pass_model_combos:
             combo["values"] = models
         if self._pass5_model_combo is not None:
             self._pass5_model_combo["values"] = models
+
+    def _render_advanced_pass_models(self) -> None:
+        """ワークフローに応じて、詳細設定の Pass モデル欄を構築する。"""
+        frame = getattr(self, "_advanced_pass_models_frame", None)
+        if frame is None:
+            return
+
+        for child in frame.winfo_children():
+            child.destroy()
+        self._pass_model_combos = []
+
+        wf = get_workflow(self.workflow_var.get())
+        if wf.two_call_enabled and wf.pass2to4_prompt is not None:
+            rows = [
+                ("Pass1:", "pass1", self.pass1_model_var),
+                ("Pass2-4:", "pass2", self.pass2_model_var),
+            ]
+        else:
+            rows = [
+                ("Pass1:", "pass1", self.pass1_model_var),
+                ("Pass2:", "pass2", self.pass2_model_var),
+                ("Pass3:", "pass3", self.pass3_model_var),
+                ("Pass4:", "pass4", self.pass4_model_var),
+            ]
+
+        models = self._get_all_models()
+        for label_text, pass_name, var in rows:
+            row = ttk.Frame(frame)
+            row.pack(fill=tk.X, pady=(1, 1))
+            ttk.Label(row, text=label_text, width=8).pack(side=tk.LEFT)
+            combo = ttk.Combobox(
+                row,
+                textvariable=var,
+                values=models,
+                state="readonly",
+            )
+            combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            combo.bind("<<ComboboxSelected>>", lambda _event, name=pass_name: self._on_pass_model_changed(name))
+            self._pass_model_combos.append(combo)
 
     def _on_pass5_max_chars_changed(self, _event: object) -> None:
         raw = (self.pass5_max_chars_var.get() or "").strip()

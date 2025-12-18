@@ -280,6 +280,25 @@ def _has_contiguous_word_coverage(lines: Sequence["LineRange"], n_words: int) ->
     return prev_end == n_words - 1
 
 
+def _has_contiguous_prefix_coverage(lines: Sequence["LineRange"], n_words: int) -> bool:
+    """Return True if lines cover a contiguous prefix starting at 0 without gaps/overlaps."""
+    if not lines:
+        return False
+    if n_words <= 0:
+        return False
+    ordered = sorted(lines, key=lambda l: (l.start_idx, l.end_idx))
+    if ordered[0].start_idx != 0:
+        return False
+    prev_end = -1
+    for line in ordered:
+        if line.start_idx < 0 or line.end_idx >= n_words or line.start_idx > line.end_idx:
+            return False
+        if line.start_idx != prev_end + 1:
+            return False
+        prev_end = line.end_idx
+    return True
+
+
 def _has_same_line_ranges(before: Sequence["LineRange"], after: Sequence["LineRange"]) -> bool:
     """Return True if line ranges (from/to) are identical and in the same order."""
     if len(before) != len(after):
@@ -551,6 +570,9 @@ class TwoPassFormatter:
             lines = _parse_lines(parsed2)
             if not lines:
                 raise FormatterError("行分割結果が空です")
+            lines = sorted(lines, key=lambda l: (l.start_idx, l.end_idx))
+            if not _has_contiguous_prefix_coverage(lines, len(updated_words)):
+                raise FormatterError("行分割結果の範囲（from/to）が不正です")
             pass2_lines = lines
 
             # Pass3: Validation (now always executed)
@@ -581,7 +603,8 @@ class TwoPassFormatter:
             record_pass_time(self.run_id, "pass3", t_p3_end - t_p3_start)
             if parsed3:
                 pass3_lines = _parse_lines(parsed3)
-                if pass3_lines and _has_full_word_coverage(pass3_lines, updated_words):
+                pass3_lines = sorted(pass3_lines, key=lambda l: (l.start_idx, l.end_idx))
+                if pass3_lines and _has_contiguous_word_coverage(pass3_lines, len(updated_words)):
                     if (
                         not self.workflow_def.allow_pass3_range_change
                         and not _has_same_line_ranges(pass2_lines, pass3_lines)
@@ -591,7 +614,7 @@ class TwoPassFormatter:
                         lines = pass3_lines
                 elif pass3_lines:
                     logger.warning(
-                        "Pass 3 returned partial coverage (words=%d, lines=%d); using Pass 2 output instead",
+                        "Pass 3 returned invalid coverage (words=%d, lines=%d); using Pass 2 output instead",
                         len(updated_words),
                         len(pass3_lines),
                     )
@@ -636,7 +659,10 @@ class TwoPassFormatter:
         segments: List[SubtitleSegment] = []
         last_end_time = 0.0
 
-        for idx, line in enumerate(lines, start=1):
+        # LLM が返す lines の順序は必ずしも時系列（start_idx順）とは限らないため、
+        # タイムコード生成前に安定した順序へ正規化する。
+        ordered_lines = sorted(lines, key=lambda l: (l.start_idx, l.end_idx))
+        for idx, line in enumerate(ordered_lines, start=1):
             if line.start_idx < 0 or line.end_idx >= len(words) or line.start_idx > line.end_idx:
                 logger.warning("行範囲が不正なためスキップ: %s", line)
                 continue
@@ -677,6 +703,10 @@ class TwoPassFormatter:
             for i in range(1, len(segments)):
                 # 遅延を適用（ただし、次のセグメントの元startを超えないよう制限）
                 new_start = segments[i].start + self.start_delay
+                if i == len(segments) - 1:
+                    max_start = max(original_last_end - 0.1, 0.0)
+                    if new_start > max_start:
+                        new_start = max_start
                 # オーバーラップ防止: 前のセグメントのendより後ろになるよう制限
                 if new_start < segments[i - 1].end:
                     new_start = segments[i - 1].end
@@ -692,6 +722,8 @@ class TwoPassFormatter:
 
             # 最後のセグメントのendを元の値に戻す
             segments[-1].end = original_last_end
+            if segments[-1].end < segments[-1].start:
+                segments[-1].start = max(segments[-1].end - 0.1, 0.0)
 
         # Re-assign indices
         for i, seg in enumerate(segments, start=1):
@@ -859,9 +891,32 @@ class TwoPassFormatter:
         if parsed:
             repl = _parse_lines(parsed)
             if repl:
-                return repl
+                repl = sorted(repl, key=lambda l: (l.start_idx, l.end_idx))
+                if self._is_valid_pass4_replacement(line, repl):
+                    return repl
+                logger.warning(
+                    "pass4 returned invalid ranges; keeping original line (%d-%d)",
+                    line.start_idx,
+                    line.end_idx,
+                )
         logger.warning("pass4 failed or empty; keeping original line (%d-%d)", line.start_idx, line.end_idx)
         return [line]
+
+    def _is_valid_pass4_replacement(self, original: LineRange, repl: Sequence[LineRange]) -> bool:
+        if not repl:
+            return False
+        prev_end = original.start_idx - 1
+        for line in repl:
+            if line.start_idx < original.start_idx or line.end_idx > original.end_idx:
+                return False
+            if line.start_idx != prev_end + 1:
+                return False
+            if line.start_idx > line.end_idx:
+                return False
+            if len(line.text) < 5 or len(line.text) > 17:
+                return False
+            prev_end = line.end_idx
+        return prev_end == original.end_idx
 
 
 __all__ = ["TwoPassFormatter", "TwoPassResult"]
