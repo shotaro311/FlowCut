@@ -58,6 +58,7 @@ class GuiController:
         keep_extracted_audio: bool = False,
         enable_pass5: bool = False,
         pass5_max_chars: int = 17,
+        pass5_provider: str | None = None,
         pass5_model: str | None = None,
         save_logs: bool = False,
         on_start: Callable[[], None] | None = None,
@@ -73,7 +74,7 @@ class GuiController:
         # 既存のワークフローが実行中かチェック
         with self._lock:
             if workflow_id in self.workflows and self.workflows[workflow_id].is_running:
-                self._notify(on_error, RuntimeError(f"ワークフロー {workflow_id} は既に実行中です"))
+                self._notify(on_error, RuntimeError(f"スロット {workflow_id} は既に実行中です"))
                 return
 
         def worker() -> None:
@@ -104,6 +105,7 @@ class GuiController:
                         keep_extracted_audio=keep_extracted_audio,
                         enable_pass5=enable_pass5,
                         pass5_max_chars=pass5_max_chars,
+                        pass5_provider=pass5_provider,
                         pass5_model=pass5_model,
                         save_logs=save_logs,
                         progress_callback=safe_progress_callback,
@@ -133,6 +135,7 @@ class GuiController:
                     metrics["processing_elapsed_sec"] = processing_elapsed_sec
                     metrics["pass5_enabled"] = bool(options.enable_pass5)
                     metrics["pass5_max_chars"] = int(options.pass5_max_chars)
+                    metrics["pass5_provider"] = options.pass5_provider
                     metrics["pass5_model"] = options.pass5_model
 
                     self._notify(on_success, result_paths, metrics)
@@ -171,6 +174,7 @@ class GuiController:
         keep_extracted_audio: bool = False,
         enable_pass5: bool = False,
         pass5_max_chars: int = 17,
+        pass5_provider: str | None = None,
         pass5_model: str | None = None,
         save_logs: bool = False,
         progress_callback: Callable[[str, int], None] | None = None,
@@ -229,6 +233,7 @@ class GuiController:
             keep_extracted_audio=bool(keep_extracted_audio),
             enable_pass5=bool(enable_pass5),
             pass5_max_chars=int(pass5_max_chars),
+            pass5_provider=(pass5_provider.strip().lower() if isinstance(pass5_provider, str) and pass5_provider.strip() else None),
             pass5_model=pass5_model,
             progress_callback=progress_callback,
             save_logs=save_logs,
@@ -311,6 +316,7 @@ class GuiController:
         total_completion_tokens = 0
         total_tokens = 0
         total_cost = 0.0
+        cost_available = False
         metrics_files_found = 0
         per_runner: dict = {}
 
@@ -360,9 +366,16 @@ class GuiController:
                             "cost_input_usd": entry.get("cost_input_usd"),
                             "cost_output_usd": entry.get("cost_output_usd"),
                         }
+                        if (
+                            isinstance(entry.get("cost_total_usd"), (int, float))
+                            or isinstance(entry.get("cost_input_usd"), (int, float))
+                            or isinstance(entry.get("cost_output_usd"), (int, float))
+                        ):
+                            cost_available = True
                 cost = data.get("run_total_cost_usd")
                 if isinstance(cost, (int, float)) and float(cost) > 0:
                     total_cost += float(cost)
+                    cost_available = True
                 else:
                     # run_total_cost_usd が無い/0 の場合は、パス別コストの合計で代替する
                     if isinstance(llm_tokens, dict):
@@ -372,6 +385,7 @@ class GuiController:
                             entry_cost = entry.get("cost_total_usd")
                             if isinstance(entry_cost, (int, float)):
                                 total_cost += float(entry_cost)
+                                cost_available = True
 
                 # GUI表示用の内訳（runnerごと）
                 transcribe_time = stage_timings_time.get("transcribe_sec") if isinstance(stage_timings_time, dict) else None
@@ -389,6 +403,7 @@ class GuiController:
             "total_completion_tokens": total_completion_tokens,
             "total_tokens": total_tokens,
             "total_cost_usd": total_cost,
+            "cost_available": cost_available,
             "total_elapsed_sec": total_elapsed_sec,
             "metrics_files_found": metrics_files_found,
             "per_runner": per_runner,

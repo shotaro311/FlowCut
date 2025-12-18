@@ -13,9 +13,10 @@ FlowCut は、音声/動画ファイルから日本語字幕（`.srt`）を作�
 ## 使い方（アプリ利用者）
 
 1. アプリを起動
-2. 右上の「API設定」で、利用するプロバイダーの API キーを保存
-3. 「ファイルを選択」→（必要なら）「保存先を変更」→「▶ 実行」
-4. 完了後、保存先フォルダに `.srt` が生成されます
+2. 右上の「API設定」で、使いたいプロバイダーの API キーを保存
+3. 必要なら「詳細設定」で使いたいモデルを選択（モデル名からプロバイダーを自動判定）
+4. 「ファイルを選択」→（必要なら）「保存先を変更」→「▶ 実行」
+5. 完了後、保存先フォルダに `.srt` が生成されます
 
 詳しい手順は `docs/README.md` を参照してください。
 
@@ -27,7 +28,6 @@ FlowCut は、音声/動画ファイルから日本語字幕（`.srt`）を作�
 
 ## 開発者向け（このリポジトリから実行する場合）
 
-- GUI 起動: `python -m src.cli.main gui`
-- CLI 実行: `python -m src.cli.main run <audio_or_video>`
+- GUI 起動（macOS）: `python3 -m src.cli.main gui`
+- CLI 実行（macOS）: `python3 -m src.cli.main run <audio_or_video>`
 - 詳細は `docs/runbook.md` を参照してください
-

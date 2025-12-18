@@ -65,15 +65,17 @@ def _normalize_llm_provider(raw: Optional[str]) -> Optional[str]:
 def _normalize_workflow(raw: Optional[str]) -> str:
     """
     ワークフロー名を正規化するヘルパー。
-    - None / 空文字は workflow1（従来挙動）にマップ
+    - None / 空文字は workflow1 にマップ
     - 未知の値はエラーにする
     """
+    from src.llm.workflows.registry import list_workflows
+
     if raw is None:
         return "workflow1"
     slug = raw.strip().lower()
     if not slug:
         return "workflow1"
-    allowed = ["workflow1", "workflow2"]
+    allowed = [wf.slug for wf in list_workflows()]
     if slug not in allowed:
         raise typer.BadParameter(f"未対応のワークフローです: {slug}. 候補: {allowed}")
     return slug
@@ -94,7 +96,7 @@ def run(
     llm_temperature: Optional[float] = typer.Option(None, '--llm-temperature', help='LLM整形時のtemperature。未指定ならプロバイダー既定値'),
     llm_timeout: Optional[float] = typer.Option(None, '--llm-timeout', help='LLM APIリクエストのタイムアウト秒数'),
     rewrite: Optional[bool] = typer.Option(None, '--rewrite/--no-rewrite', help='LLM整形で語尾リライトを有効化する'),
-    workflow: Optional[str] = typer.Option(None, '--workflow', help='使用するLLM整形ワークフロー（例: workflow1, workflow2）。未指定なら workflow1'),
+    workflow: Optional[str] = typer.Option(None, '--workflow', help='使用するLLM整形ワークフロー（例: workflow1, workflow2, workflow3）。未指定なら workflow1'),
     start_delay: float = typer.Option(0.0, '--start-delay', help='テロップ開始時間を遅らせる秒数（例: 0.2）。最初のテロップのstartと最後のendは維持される'),
     keep_audio: bool = typer.Option(False, '--keep-audio', help='動画から抽出した音声ファイルを保存する'),
     simulate: bool = typer.Option(True, '--simulate/--no-simulate', help='シミュレーションモードを切り替える'),
