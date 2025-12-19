@@ -13,7 +13,7 @@ Pass2PromptFn = Callable[[Sequence["WordTimestamp"], float], str]
 Pass3PromptFn = Callable[
     [Sequence["LineRange"], Sequence["WordTimestamp"], Any, Sequence[str]], str
 ]
-Pass4PromptFn = Callable[["LineRange", Sequence["WordTimestamp"]], str]
+Pass4PromptFn = Callable[["LineRange", Sequence["WordTimestamp"], int], str]
 Pass2to4PromptFn = Callable[[Sequence["WordTimestamp"], float, Sequence[str]], str]
 
 

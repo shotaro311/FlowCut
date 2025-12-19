@@ -9,21 +9,37 @@ from src.llm.workflows.definition import WorkflowDefinition
 
 def build_pass1_prompt(raw_text: str, words: Sequence, glossary_terms: Sequence[str]) -> str:
     indexed = build_indexed_words(words)
+    glossary_text = "\n".join(glossary_terms or [])
     return (
-        "あなたはプロの字幕エディターです。以下の単語列を順番を変えずに最小限の修正だけ加えてください。\n"
-        "- 許可される操作: replace, delete（挿入は禁止。音声に無い単語を足さないこと）。\n"
-        "- 単語の順序は変えないでください。\n"
-        "- 出力は JSON の operations 配列のみ。説明文・コードフェンスは禁止。\n\n"
-        f"入力テキスト:\n{raw_text}\n\n"
+        "# Role\n"
+        "あなたはプロの字幕エディターです。\n"
+        "以下の単語列（index付き）を、語順を変えずに**最小限**で校正してください。\n\n"
+        "# 目的（この順で優先）\n"
+        "1. 誤字・脱字を修正\n"
+        "2. 固有名詞（人名・地名・組織名）を、Glossary と照らし合わせて正しい表記に揃える\n"
+        "3. 政治関連用語（政党名・法案名・政策名など）は、一般に使われる公式表記に統一（例: Wikipedia等）\n"
+        "   - ただし確信がない場合は変更しない（誤修正を避ける）\n\n"
+        "# 許可される操作（JSON operations）\n"
+        "- replace: 誤変換/誤字を正しい表記に置換（必要なら複数単語を1つにまとめて置換してよい）\n"
+        "- delete: 明らかなノイズ（フィラー・重複）を削除\n\n"
+        "# 禁止（厳守）\n"
+        "- insert（音声に無い単語を追加しない）\n"
+        "- 並び替え、要約、意訳\n\n"
+        "# Glossary（最優先）\n"
+        "Glossary にある表記が正解です。該当する場合は必ず Glossary 表記に揃えてください。\n"
+        f"{glossary_text}\n\n"
+        "# Input\n"
+        f"元のテキスト:\n{raw_text}\n\n"
         f"単語リスト（index:word）:\n{indexed}\n\n"
-        "出力フォーマット例:\n"
+        "# Output\n"
+        "以下のJSONのみを返してください（説明文・コードフェンス禁止）:\n"
         "{\n"
         '  "operations": [\n'
-        '    {"type": "replace", "start_idx": 10, "end_idx": 11, "text": "カレーライス"},\n'
+        '    {"type": "replace", "start_idx": 10, "end_idx": 11, "text": "菅義偉"},\n'
         '    {"type": "delete", "start_idx": 25, "end_idx": 25}\n'
         "  ]\n"
         "}\n"
-        "追加の説明・前後文字列・コードフェンスは一切不要です。"
+        '操作が不要なら {"operations": []}\n'
     )
 
 

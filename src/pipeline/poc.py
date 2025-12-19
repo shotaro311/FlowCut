@@ -61,6 +61,7 @@ class PocRunOptions:
     llm_timeout: float | None = None
     glossary_terms: list[str] | None = None
     start_delay: float = 0.0
+    line_max_chars: int = 17
     keep_extracted_audio: bool = False
     enable_pass5: bool = False
     pass5_max_chars: int = 17
@@ -245,7 +246,7 @@ def execute_poc_run(
                     tp_result: TwoPassResult | None = two_pass.run(
                         text=result.text,
                         words=result.words or [],
-                        max_chars=17.0,
+                        max_chars=float(options.line_max_chars),
                         progress_callback=options.progress_callback,
                     )
                     if tp_result:
@@ -272,9 +273,10 @@ def execute_poc_run(
                                 model_override = None
                             else:
                                 model_override = options.llm_pass4_model or options.llm_pass3_model
+                            pass5_max_chars = min(int(options.pass5_max_chars), int(options.line_max_chars))
                             subtitle_text = Pass5Processor(
                                 provider=pass5_provider,
-                                max_chars=options.pass5_max_chars,
+                                max_chars=pass5_max_chars,
                                 model_override=model_override,
                                 run_id=run_id,
                                 source_name=input_path.name,
@@ -480,6 +482,7 @@ def prepare_resume_run(
         ),
         glossary_terms=option_meta.get("glossary_terms"),
         start_delay=start_delay,
+        line_max_chars=option_meta.get("line_max_chars", base_options.line_max_chars),
         keep_extracted_audio=bool(option_meta.get("keep_extracted_audio", base_options.keep_extracted_audio)),
         save_logs=bool(option_meta.get("save_logs", base_options.save_logs)),
         enable_pass5=option_meta.get("enable_pass5", base_options.enable_pass5),
@@ -594,6 +597,7 @@ def _build_progress_metadata(
         "llm_timeout": options.llm_timeout,
         "glossary_terms": options.glossary_terms,
         "start_delay": options.start_delay,
+        "line_max_chars": options.line_max_chars,
         "keep_extracted_audio": options.keep_extracted_audio,
         "save_logs": options.save_logs,
         "enable_pass5": options.enable_pass5,

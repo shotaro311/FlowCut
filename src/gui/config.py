@@ -229,6 +229,29 @@ class GuiConfig:
         self._config["pass5_max_chars"] = chars
         self.save_config()
 
+    def get_line_max_chars(self) -> int:
+        """字幕1行の最大文字数（12〜20）を取得する。"""
+        chars = self._config.get("line_max_chars", 17)
+        try:
+            value = int(chars)
+        except (TypeError, ValueError):
+            value = 17
+        if value < 12:
+            value = 12
+        if value > 20:
+            value = 20
+        return value
+
+    def set_line_max_chars(self, chars: int) -> None:
+        """字幕1行の最大文字数（12〜20）を保存する。"""
+        value = int(chars)
+        if value < 12:
+            value = 12
+        if value > 20:
+            value = 20
+        self._config["line_max_chars"] = value
+        self.save_config()
+
     def get_pass5_model(self) -> str | None:
         """Pass5（長行改行）のモデル名を取得する。"""
         model = self.get_pass_model("pass5", "").strip()

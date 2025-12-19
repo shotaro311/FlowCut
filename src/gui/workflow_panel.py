@@ -49,6 +49,7 @@ class WorkflowPanel(ttk.Frame):
         self.pass3_model_var = tk.StringVar()
         self.pass4_model_var = tk.StringVar()
         self.start_delay_var = tk.StringVar(value="0.2")
+        self.line_max_chars_var = tk.StringVar(value="17")
         self.advanced_visible = tk.BooleanVar(value=False)
         self.save_logs_var = tk.BooleanVar(value=False)
         self.keep_extracted_audio_var = tk.BooleanVar(value=False)
@@ -128,6 +129,21 @@ class WorkflowPanel(ttk.Frame):
         ttk.Label(workflow_row, text="workflow2: 校正/最適化  workflow3: 校正→行分割", foreground="#888888").pack(
             side=tk.LEFT, padx=(8, 0)
         )
+
+        # 1行の最大文字数（全ワークフロー共通）
+        max_chars_row = ttk.Frame(options_frame)
+        max_chars_row.pack(fill=tk.X, pady=(2, 2))
+        ttk.Label(max_chars_row, text="最大文字数:").pack(side=tk.LEFT)
+        max_chars_combo = ttk.Combobox(
+            max_chars_row,
+            textvariable=self.line_max_chars_var,
+            values=[str(i) for i in range(12, 21)],
+            state="readonly",
+            width=4,
+        )
+        max_chars_combo.pack(side=tk.LEFT, padx=(4, 0))
+        max_chars_combo.bind("<<ComboboxSelected>>", self._on_line_max_chars_changed)
+        ttk.Label(max_chars_row, text="（字幕1行 / 12〜20）", foreground="#888888").pack(side=tk.LEFT, padx=(4, 0))
         
         # 詳細設定トグル
         advanced_row = ttk.Frame(options_frame)
@@ -337,6 +353,7 @@ class WorkflowPanel(ttk.Frame):
         self._render_advanced_pass_models()
         self._refresh_advanced_model_choices()
         self.start_delay_var.set(str(self.config.get_start_delay()))
+        self.line_max_chars_var.set(str(self.config.get_line_max_chars()))
         self.save_logs_var.set(bool(self.config.get_save_logs()))
         self.keep_extracted_audio_var.set(bool(self.config.get_keep_extracted_audio()))
         self.notify_on_complete_var.set(bool(self.config.get_notify_on_complete()))
@@ -352,6 +369,7 @@ class WorkflowPanel(ttk.Frame):
 
         self.pass5_enabled_var.set(bool(self.config.get_pass5_enabled()))
         self.pass5_max_chars_var.set(str(self.config.get_pass5_max_chars()))
+        self._clamp_pass5_max_chars_to_line_max()
         self._toggle_pass5()
 
     def select_file(self) -> None:
@@ -480,6 +498,8 @@ class WorkflowPanel(ttk.Frame):
         self.progress["value"] = 0
         self._start_rolling_animation()
 
+        line_max_chars = self._get_line_max_chars()
+
         pass5_max_chars = 17
         if enable_pass5:
             try:
@@ -494,6 +514,10 @@ class WorkflowPanel(ttk.Frame):
                 self._stop_rolling_animation()
                 self._set_running_state(False)
                 return
+            if pass5_max_chars > line_max_chars:
+                pass5_max_chars = line_max_chars
+                self.pass5_max_chars_var.set(str(pass5_max_chars))
+                self.config.set_pass5_max_chars(pass5_max_chars)
 
         start_delay = self._get_start_delay()
         
@@ -510,6 +534,7 @@ class WorkflowPanel(ttk.Frame):
             pass3_model=self.pass3_model_var.get().strip() or None,
             pass4_model=self.pass4_model_var.get().strip() or None,
             start_delay=start_delay,
+            line_max_chars=line_max_chars,
             keep_extracted_audio=bool(self.keep_extracted_audio_var.get()),
             enable_pass5=enable_pass5,
             pass5_max_chars=pass5_max_chars,
@@ -734,6 +759,7 @@ class WorkflowPanel(ttk.Frame):
         enabled = bool(self.pass5_enabled_var.get())
         self.config.set_pass5_enabled(enabled)
         if enabled:
+            self._clamp_pass5_max_chars_to_line_max()
             self.pass5_frame.pack(fill=tk.X, pady=(4, 2))
         else:
             self.pass5_frame.pack_forget()
@@ -903,7 +929,19 @@ class WorkflowPanel(ttk.Frame):
             combo.bind("<<ComboboxSelected>>", lambda _event, name=pass_name: self._on_pass_model_changed(name))
             self._pass_model_combos.append(combo)
 
-    def _on_pass5_max_chars_changed(self, _event: object) -> None:
+    def _get_line_max_chars(self) -> int:
+        raw = (self.line_max_chars_var.get() or "").strip()
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = 17
+        if value < 12:
+            value = 12
+        if value > 20:
+            value = 20
+        return value
+
+    def _clamp_pass5_max_chars_to_line_max(self) -> None:
         raw = (self.pass5_max_chars_var.get() or "").strip()
         try:
             value = int(raw)
@@ -911,8 +949,21 @@ class WorkflowPanel(ttk.Frame):
             value = 17
         if value < 8:
             value = 8
+        line_max_chars = self._get_line_max_chars()
+        if value > line_max_chars:
+            value = line_max_chars
         self.pass5_max_chars_var.set(str(value))
         self.config.set_pass5_max_chars(value)
+
+    def _on_line_max_chars_changed(self, _event: object) -> None:
+        value = self._get_line_max_chars()
+        self.line_max_chars_var.set(str(value))
+        self.config.set_line_max_chars(value)
+        if bool(self.pass5_enabled_var.get()):
+            self._clamp_pass5_max_chars_to_line_max()
+
+    def _on_pass5_max_chars_changed(self, _event: object) -> None:
+        self._clamp_pass5_max_chars_to_line_max()
 
     def _on_pass5_model_changed(self, _event: object) -> None:
         model = (self.pass5_model_var.get() or "").strip()

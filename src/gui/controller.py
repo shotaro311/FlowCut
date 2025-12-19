@@ -55,6 +55,7 @@ class GuiController:
         pass3_model: str | None = None,
         pass4_model: str | None = None,
         start_delay: float = 0.0,
+        line_max_chars: int = 17,
         keep_extracted_audio: bool = False,
         enable_pass5: bool = False,
         pass5_max_chars: int = 17,
@@ -102,6 +103,7 @@ class GuiController:
                         pass3_model=pass3_model,
                         pass4_model=pass4_model,
                         start_delay=start_delay,
+                        line_max_chars=line_max_chars,
                         keep_extracted_audio=keep_extracted_audio,
                         enable_pass5=enable_pass5,
                         pass5_max_chars=pass5_max_chars,
@@ -133,6 +135,7 @@ class GuiController:
                         metrics = {}
                     metrics["wait_elapsed_sec"] = wait_elapsed_sec
                     metrics["processing_elapsed_sec"] = processing_elapsed_sec
+                    metrics["line_max_chars"] = int(options.line_max_chars)
                     metrics["pass5_enabled"] = bool(options.enable_pass5)
                     metrics["pass5_max_chars"] = int(options.pass5_max_chars)
                     metrics["pass5_provider"] = options.pass5_provider
@@ -171,6 +174,7 @@ class GuiController:
         pass3_model: str | None = None,
         pass4_model: str | None = None,
         start_delay: float = 0.0,
+        line_max_chars: int = 17,
         keep_extracted_audio: bool = False,
         enable_pass5: bool = False,
         pass5_max_chars: int = 17,
@@ -215,6 +219,18 @@ class GuiController:
 
         glossary_terms = get_config().get_glossary_terms()
 
+        line_max_chars_int = int(line_max_chars)
+        if line_max_chars_int < 12:
+            line_max_chars_int = 12
+        if line_max_chars_int > 20:
+            line_max_chars_int = 20
+
+        pass5_max_chars_int = int(pass5_max_chars)
+        if pass5_max_chars_int < 8:
+            pass5_max_chars_int = 8
+        if enable_pass5 and pass5_max_chars_int > line_max_chars_int:
+            pass5_max_chars_int = line_max_chars_int
+
         return PocRunOptions(
             output_dir=Path("temp/poc_samples"),
             progress_dir=Path("temp/progress"),
@@ -230,9 +246,10 @@ class GuiController:
             llm_timeout=settings.llm.request_timeout,
             glossary_terms=glossary_terms,
             start_delay=float(start_delay),
+            line_max_chars=line_max_chars_int,
             keep_extracted_audio=bool(keep_extracted_audio),
             enable_pass5=bool(enable_pass5),
-            pass5_max_chars=int(pass5_max_chars),
+            pass5_max_chars=pass5_max_chars_int,
             pass5_provider=(pass5_provider.strip().lower() if isinstance(pass5_provider, str) and pass5_provider.strip() else None),
             pass5_model=pass5_model,
             progress_callback=progress_callback,

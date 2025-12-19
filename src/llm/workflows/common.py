@@ -9,7 +9,7 @@ def build_indexed_words(words: Sequence) -> str:
     return "\n".join(f"{i}: {w.word}" for i, w in enumerate(words))
 
 
-def build_pass4_prompt(line, words) -> str:
+def build_pass4_prompt(line, words, max_chars: int) -> str:
     indexed = "\n".join(
         f"{i}: {w.word}"
         for i, w in enumerate(words[line.start_idx : line.end_idx + 1], start=line.start_idx)
@@ -18,7 +18,7 @@ def build_pass4_prompt(line, words) -> str:
         "# Role\n"
         "あなたはテロップ最終チェックの追加ステップ担当です。与えられた行に対してのみ、条件を満たす複数行に必要最小限で分割してください。\n\n"
         "# Constraints\n"
-        "- 必ず1行あたり全角5〜17文字に収めること\n"
+        f"- 必ず1行あたり全角5〜{int(max_chars)}文字に収めること\n"
         "- 語順を変えない、語を追加/削除しない\n"
         "- 要約・翻訳・意訳をしない\n"
         "- 行末の句読点（、。）は削除。文中の句読点は残してよい\n"
@@ -38,4 +38,3 @@ def build_pass4_prompt(line, words) -> str:
 
 
 DEFAULT_PASS4_PROMPT: Pass4PromptFn = build_pass4_prompt
-

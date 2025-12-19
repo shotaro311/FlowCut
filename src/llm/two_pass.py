@@ -1,4 +1,4 @@
-"""Two-pass LLM formatter (Pass1: replace/delete, Pass2: 17-char line splits)."""
+"""Two-pass LLM formatter (Pass1: replace/delete, Pass2: line splits by max_chars)."""
 from __future__ import annotations
 
 import json
@@ -299,6 +299,67 @@ def _has_contiguous_prefix_coverage(lines: Sequence["LineRange"], n_words: int) 
     return True
 
 
+def _try_normalize_lines_for_coverage(
+    lines: Sequence["LineRange"],
+    n_words: int,
+    *,
+    require_full_coverage: bool,
+) -> tuple[List["LineRange"], str] | None:
+    """
+    LLM が返す from/to の典型的なズレ（1-based / end-exclusive / 最終 to=n_words）を
+    安全に補正できる場合だけ正規化する。
+    """
+    if not lines or n_words <= 0:
+        return None
+
+    check_fn = _has_contiguous_word_coverage if require_full_coverage else _has_contiguous_prefix_coverage
+    ordered = sorted(lines, key=lambda l: (l.start_idx, l.end_idx))
+
+    def _sorted(candidate: Sequence["LineRange"]) -> List["LineRange"]:
+        return sorted(candidate, key=lambda l: (l.start_idx, l.end_idx))
+
+    def _shift(candidate: Sequence["LineRange"], *, start_delta: int, end_delta: int) -> List["LineRange"]:
+        return _sorted(
+            [
+                LineRange(start_idx=l.start_idx + start_delta, end_idx=l.end_idx + end_delta, text=l.text)
+                for l in candidate
+            ]
+        )
+
+    # 1) last to == n_words (off-by-one) を疑う
+    max_end = max(l.end_idx for l in ordered)
+    if max_end == n_words and all(l.end_idx <= n_words for l in ordered):
+        clamped = _sorted(
+            [
+                LineRange(
+                    start_idx=l.start_idx,
+                    end_idx=(n_words - 1) if l.end_idx == n_words else l.end_idx,
+                    text=l.text,
+                )
+                for l in ordered
+            ]
+        )
+        if check_fn(clamped, n_words):
+            return clamped, "clamp_end"
+
+    # 2) end-exclusive（[from, to)）を疑う
+    end_exclusive = _shift(ordered, start_delta=0, end_delta=-1)
+    if check_fn(end_exclusive, n_words):
+        return end_exclusive, "end_exclusive"
+
+    # 3) 1-based inclusive を疑う
+    one_based = _shift(ordered, start_delta=-1, end_delta=-1)
+    if check_fn(one_based, n_words):
+        return one_based, "one_based"
+
+    # 4) 1-based & end-exclusive（[from, to)）を疑う
+    one_based_end_exclusive = _shift(ordered, start_delta=-1, end_delta=-2)
+    if check_fn(one_based_end_exclusive, n_words):
+        return one_based_end_exclusive, "one_based_end_exclusive"
+
+    return None
+
+
 def _has_same_line_ranges(before: Sequence["LineRange"], after: Sequence["LineRange"]) -> bool:
     """Return True if line ranges (from/to) are identical and in the same order."""
     if len(before) != len(after):
@@ -372,6 +433,7 @@ class TwoPassFormatter:
         # テロップ開始時間遅延（秒）。2番目以降のセグメントのstartをこの秒数だけ遅らせる。
         # 最初のセグメントのstartと最後のセグメントのendは維持される。
         self.start_delay = start_delay
+        self._current_line_max_chars = 17
 
     # --- logging helpers -------------------------------------------------
 
@@ -430,7 +492,7 @@ class TwoPassFormatter:
             provider=self.provider_slug,
             rewrite=False,
             metadata=metadata,
-            line_max_chars=17.0,
+            line_max_chars=float(getattr(self, "_current_line_max_chars", 17)),
             max_retries=1,
             temperature=self.temperature,
             timeout=self.timeout,
@@ -448,6 +510,14 @@ class TwoPassFormatter:
     ) -> TwoPassResult | None:
         if not words:
             raise FormatterError("wordタイムスタンプが空です")
+        try:
+            max_chars_int = int(max_chars)
+        except (TypeError, ValueError):
+            max_chars_int = 17
+        if max_chars_int <= 0:
+            max_chars_int = 17
+        self._current_line_max_chars = max_chars_int
+        max_chars = float(max_chars_int)
         try:
             logger.info("two-pass: pass1 start (words=%d, provider=%s)", len(words), self.provider_slug)
             # Pass1: replace/delete only
@@ -537,7 +607,15 @@ class TwoPassFormatter:
                     if any(len(line.text) < 5 or len(line.text) > int(max_chars) for line in combined_lines):
                         raise FormatterError("統合結果に文字数違反の行があります")
                     if not _has_contiguous_word_coverage(combined_lines, len(updated_words)):
-                        raise FormatterError("統合結果の範囲（from/to）が不正です")
+                        normalized = _try_normalize_lines_for_coverage(
+                            combined_lines,
+                            len(updated_words),
+                            require_full_coverage=True,
+                        )
+                        if normalized is None:
+                            raise FormatterError("統合結果の範囲（from/to）が不正です")
+                        combined_lines, reason = normalized
+                        logger.warning("pass2to4: normalized line ranges (%s)", reason)
 
                     issues = detect_issues(combined_lines, updated_words)
                     if issues:
@@ -572,7 +650,15 @@ class TwoPassFormatter:
                 raise FormatterError("行分割結果が空です")
             lines = sorted(lines, key=lambda l: (l.start_idx, l.end_idx))
             if not _has_contiguous_prefix_coverage(lines, len(updated_words)):
-                raise FormatterError("行分割結果の範囲（from/to）が不正です")
+                normalized = _try_normalize_lines_for_coverage(
+                    lines,
+                    len(updated_words),
+                    require_full_coverage=False,
+                )
+                if normalized is None:
+                    raise FormatterError("行分割結果の範囲（from/to）が不正です")
+                lines, reason = normalized
+                logger.warning("pass2: normalized line ranges (%s)", reason)
             pass2_lines = lines
 
             # Pass3: Validation + optional correction
@@ -613,6 +699,16 @@ class TwoPassFormatter:
                 if parsed3:
                     pass3_lines = _parse_lines(parsed3)
                     pass3_lines = sorted(pass3_lines, key=lambda l: (l.start_idx, l.end_idx))
+                    if pass3_lines and not _has_contiguous_word_coverage(pass3_lines, len(updated_words)):
+                        normalized = _try_normalize_lines_for_coverage(
+                            pass3_lines,
+                            len(updated_words),
+                            require_full_coverage=True,
+                        )
+                        if normalized is not None:
+                            pass3_lines, reason = normalized
+                            logger.warning("pass3: normalized line ranges (%s)", reason)
+
                     if pass3_lines and _has_contiguous_word_coverage(pass3_lines, len(updated_words)):
                         if (
                             not self.workflow_def.allow_pass3_range_change
@@ -810,6 +906,7 @@ class TwoPassFormatter:
         if not lines or not words:
             return list(lines)
 
+        max_chars = getattr(self, "_current_line_max_chars", 17)
         max_idx = len(words) - 1
         # lines のうち、最も大きい end_idx を持つものを取得
         last_line = max(lines, key=lambda l: l.end_idx)
@@ -830,20 +927,20 @@ class TwoPassFormatter:
             text_parts: List[str] = []
             current_len = 0
 
-            # 最低 1 つは単語を含める & 17 文字程度を目安に分割（既存仕様を緩く模倣）
+            # 最低 1 つは単語を含める & 目安の文字数で分割（既存仕様を緩く模倣）
             while idx <= max_idx:
                 word = words[idx].word or ""
                 # 日本語前提のため、ここでは単純に連結（スペースは挿入しない）
                 next_len = current_len + len(word)
-                # すでにある程度の長さがあり、これ以上繋ぐと 17 文字を大きく超える場合は改行
-                if text_parts and next_len > 17 and current_len >= 5:
+                # すでにある程度の長さがあり、これ以上繋ぐと文字数を超える場合は改行
+                if text_parts and next_len > max_chars and current_len >= 5:
                     break
                 text_parts.append(word)
                 current_len = next_len
                 idx += 1
 
                 # ちょうど良い長さになったら一旦区切る
-                if current_len >= 10 and (idx > max_idx or current_len >= 17):
+                if current_len >= 10 and (idx > max_idx or current_len >= max_chars):
                     break
 
             line_end = idx - 1
@@ -879,12 +976,13 @@ class TwoPassFormatter:
         return self.workflow_def.pass3_prompt(lines, words, issues, self.glossary_terms)
 
     def _needs_pass4(self, line: LineRange) -> bool:
-        return len(line.text) > 17 or len(line.text) < 5
+        max_chars = getattr(self, "_current_line_max_chars", 17)
+        return len(line.text) > max_chars or len(line.text) < 5
 
     def _build_pass4_prompt(self, line: LineRange, words: Sequence[WordTimestamp]) -> str:
         if self.workflow_def.pass4_prompt is None:
             raise FormatterError(f"未設定のワークフローです: {self.workflow}")
-        return self.workflow_def.pass4_prompt(line, words)
+        return self.workflow_def.pass4_prompt(line, words, getattr(self, "_current_line_max_chars", 17))
 
     def _run_pass4_fix(self, line: LineRange, words: Sequence[WordTimestamp]) -> List[LineRange]:
         prompt = self._build_pass4_prompt(line, words)
@@ -914,6 +1012,7 @@ class TwoPassFormatter:
     def _is_valid_pass4_replacement(self, original: LineRange, repl: Sequence[LineRange]) -> bool:
         if not repl:
             return False
+        max_chars = getattr(self, "_current_line_max_chars", 17)
         prev_end = original.start_idx - 1
         for line in repl:
             if line.start_idx < original.start_idx or line.end_idx > original.end_idx:
@@ -922,7 +1021,7 @@ class TwoPassFormatter:
                 return False
             if line.start_idx > line.end_idx:
                 return False
-            if len(line.text) < 5 or len(line.text) > 17:
+            if len(line.text) < 5 or len(line.text) > max_chars:
                 return False
             prev_end = line.end_idx
         return prev_end == original.end_idx
