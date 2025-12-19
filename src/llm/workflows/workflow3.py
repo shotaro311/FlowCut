@@ -1,33 +1,43 @@
 from __future__ import annotations
 
-import json
 from typing import Sequence
 
 from src.llm.workflows.common import DEFAULT_PASS4_PROMPT, build_indexed_words
 from src.llm.workflows.definition import WorkflowDefinition
 
 
-def build_pass1_prompt(raw_text: str, words: Sequence) -> str:
+def build_pass1_prompt(raw_text: str, words: Sequence, glossary_terms: Sequence[str]) -> str:
     indexed = build_indexed_words(words)
+    glossary_text = "\n".join(glossary_terms or [])
     return (
-        "あなたはプロの字幕エディターです。以下の単語列を順番を変えずに、"
-        "**明らかな誤変換のみ**最小限の修正を加えてください。\n\n"
-        "# 許可される操作\n"
-        "- **replace**: 明らかな誤変換を正しい語に置き換え\n"
-        "- **delete**: 明らかなノイズ（フィラー、重複）を削除\n"
-        "- **禁止**: 挿入（音声に無い単語を追加しない）、並び替え、要約、意訳\n\n"
-        "# 入力\n"
-        f"元のテキスト:\n{raw_text}\n\n"
+        "# Role\n"
+        "あなたはプロの字幕校正者です。\n"
+        "以下の単語列（index付き）を、語順を変えずに**最小限**で校正してください。\n\n"
+        "# 目的（重要）\n"
+        "- 固有名詞・政治関連用語・誤字脱字の表記を整える（確信がある場合のみ）\n"
+        "- 行分割より前の工程なので、ここで表記を確定させる\n\n"
+        "# 許可される操作（JSON operations）\n"
+        "- replace: 誤変換/誤字を置換（必要なら複数単語を1つにまとめてもよい）\n"
+        "- delete: 明らかなノイズ（フィラー・重複）の削除\n\n"
+        "# 禁止（厳守）\n"
+        "- insert（音声にない語の追加）\n"
+        "- 並び替え、要約、意訳\n"
+        "- 迷う場合の無理な修正（保守的に）\n\n"
+        "# Glossary（最優先）\n"
+        "Glossaryにある表記が正解です。該当する場合は必ずGlossary表記に揃えてください。\n"
+        "複数単語に分かれていても、連続してGlossary語になる場合はその範囲を replace して1語にまとめてOKです。\n\n"
+        f"{glossary_text}\n\n"
+        "# Input\n"
         f"単語リスト（index:word）:\n{indexed}\n\n"
-        "# 出力\n"
-        "以下のJSON形式のみを返してください。説明文・コードフェンスは禁止。\n"
+        "# Output\n"
+        "以下のJSONのみを返してください（説明文・コードフェンス禁止）:\n"
         "{\n"
         '  "operations": [\n'
-        '    {"type": "replace", "start_idx": 10, "end_idx": 11, "text": "..."},\n'
+        '    {"type": "replace", "start_idx": 10, "end_idx": 11, "text": "菅義偉"},\n'
         '    {"type": "delete", "start_idx": 25, "end_idx": 25}\n'
         "  ]\n"
         "}\n"
-        '操作が不要な場合は空配列を返してください: {"operations": []}\n'
+        '操作が不要なら {"operations": []}\n'
     )
 
 
@@ -36,80 +46,21 @@ def build_pass2_prompt(words: Sequence, max_chars: float) -> str:
     return (
         "# Role\n"
         "あなたは熟練の動画テロップ編集者です。\n"
-        "以下の単語リストを、視聴者が読みやすいように行分割してください。\n\n"
-        "# ルール\n"
-        "1. 行頭に助詞・補助表現・小さい文字を置かない\n"
-        "2. 行末の句読点（、。）は削除\n"
-        "3. 文字数は5〜17文字の範囲を厳守\n"
-        f"   - 最大: {int(max_chars)}文字（全角）\n\n"
-        "# Input\n"
-        f"単語リスト（index:word）:\n{indexed}\n\n"
-        "# Output\n"
-        "以下のJSONのみを返してください（説明・コードフェンス禁止）:\n"
-        "{\n"
-        '  "lines": [\n'
-        '    {"from": 0, "to": 10, "text": "...."},\n'
-        '    {"from": 11, "to": 25, "text": "...."}\n'
-        "  ]\n"
-        "}\n"
-    )
-
-
-def build_pass3_prompt(lines, words, issues, glossary_terms) -> str:
-    if issues:
-        issue_text = "\n".join([f"- {issue.description} → {issue.suggested_action}" for issue in issues])
-    else:
-        issue_text = "（検出された問題はありません）"
-    current_lines = json.dumps(
-        [{"from": l.start_idx, "to": l.end_idx, "text": l.text} for l in lines],
-        ensure_ascii=False,
-        indent=2,
-    )
-    glossary_text = "\n".join(glossary_terms or [])
-    return (
-        "# Role\n"
-        "あなたは字幕の校正者です。以下の行を校正してください。\n\n"
-        "# ルール\n"
-        "- 誤字・脱字を修正\n"
-        "- Glossary がある場合は表記を揃える\n"
-        "- 必要なら行範囲（from/to）を調整してよい\n"
-        "- JSONのみを返す\n\n"
-        "# Glossary\n"
-        f"{glossary_text}\n\n"
-        "# 検出された問題（参考）\n"
-        f"{issue_text}\n\n"
-        "# Input\n"
-        f"現在の行分割:\n{current_lines}\n\n"
-        "# Output\n"
-        "以下のJSONのみを返してください（説明・コードフェンス禁止）:\n"
-        "{\n"
-        '  "lines": [\n'
-        '    {"from": 0, "to": 11, "text": "...."}\n'
-        "  ]\n"
-        "}\n"
-    )
-
-
-def build_pass2to4_prompt(words: Sequence, max_chars: float, glossary_terms) -> str:
-    indexed = build_indexed_words(words)
-    glossary_text = "\n".join(glossary_terms or [])
-    max_chars_int = int(max_chars)
-    return (
-        "# Role\n"
-        "あなたはプロの字幕編集者です。\n"
-        "以下の単語リスト（index:word）を、字幕用の行にまとめてください。\n\n"
+        "以下の単語リスト（index:word）を、字幕用の行に分割してください。\n\n"
         "# 必須条件（最重要）\n"
         "- 単語の順序は変えない。単語を落とさない。重複させない。\n"
-        f"- 全角 {max_chars_int} 文字以内（5〜{max_chars_int} 文字）で行を作る。\n"
+        f"- 1行の文字数は必ず 5〜{int(max_chars)} 文字に収める。\n"
         "- from/to は単語indexの範囲（両端含む）。0 から最後の index まで漏れなく連続でカバーする。\n"
-        "- 行末の句読点（、。）は削除する（文中は必要なら残してよい）。\n"
-        "- 誤字・脱字は最小限に修正してよい（意訳・要約は禁止）。\n"
-        "- Glossary がある場合は表記を揃える。\n\n"
-        "# 禁止\n"
-        "- 説明文、コードフェンス、前後テキストの付与\n"
-        "- JSON以外の出力\n\n"
-        "# Glossary\n"
-        f"{glossary_text}\n\n"
+        "- 行末の句読点（、。）は削除する（文中は必要なら残してよい）。\n\n"
+        "# 分割ルール（優先度高）\n"
+        "1. 行頭に助詞・補助表現・小さい文字を置かない（前行に寄せる）\n"
+        "2. 1〜4文字の極端に短い行を作らない（必ず統合して5文字以上）\n"
+        "3. 引用表現「〜って言う/思う」は分割しない\n"
+        "4. 意味のまとまり（文節）を優先して自然に\n\n"
+        "# 自己チェック（出力前に必ず確認）\n"
+        "- 全行が 5〜17 文字以内か\n"
+        "- from/to が 0..last を連続で全カバーしているか（ギャップ/重複なし）\n"
+        "- 行頭が助詞だけになっていないか\n\n"
         "# Input\n"
         f"単語リスト（index:word）:\n{indexed}\n\n"
         "# Output\n"
@@ -125,16 +76,17 @@ def build_pass2to4_prompt(words: Sequence, max_chars: float, glossary_terms) -> 
 
 WORKFLOW = WorkflowDefinition(
     slug="workflow3",
-    label="workflow3: カスタム",
-    description="カスタム用（ここを書き換えると workflow3 にだけ反映）",
+    label="workflow3: 校正→行分割（Pass3なし）",
+    description="固有名詞/用語はPass1で確定し、Pass2で最終行分割（Pass3はスキップ）",
     wf_env_number=3,
     optimized_pass4=False,
-    allow_pass3_range_change=True,
-    pass1_fallback_enabled=False,
-    two_call_enabled=True,
+    allow_pass3_range_change=False,
+    pass3_enabled=False,
+    pass1_fallback_enabled=True,
+    two_call_enabled=False,
     pass1_prompt=build_pass1_prompt,
     pass2_prompt=build_pass2_prompt,
-    pass3_prompt=build_pass3_prompt,
+    pass3_prompt=None,
     pass4_prompt=DEFAULT_PASS4_PROMPT,
-    pass2to4_prompt=build_pass2to4_prompt,
+    pass2to4_prompt=None,
 )

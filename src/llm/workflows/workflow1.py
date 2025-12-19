@@ -7,7 +7,7 @@ from src.llm.workflows.common import DEFAULT_PASS4_PROMPT, build_indexed_words
 from src.llm.workflows.definition import WorkflowDefinition
 
 
-def build_pass1_prompt(raw_text: str, words: Sequence) -> str:
+def build_pass1_prompt(raw_text: str, words: Sequence, glossary_terms: Sequence[str]) -> str:
     indexed = build_indexed_words(words)
     return (
         "あなたはプロの字幕エディターです。以下の単語列を順番を変えずに最小限の修正だけ加えてください。\n"
@@ -146,4 +146,3 @@ WORKFLOW = WorkflowDefinition(
     pass3_prompt=build_pass3_prompt,
     pass4_prompt=DEFAULT_PASS4_PROMPT,
 )
-

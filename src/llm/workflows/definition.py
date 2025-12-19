@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from src.transcribe.base import WordTimestamp
 
 
-Pass1PromptFn = Callable[[str, Sequence["WordTimestamp"]], str]
+Pass1PromptFn = Callable[[str, Sequence["WordTimestamp"], Sequence[str]], str]
 Pass2PromptFn = Callable[[Sequence["WordTimestamp"], float], str]
 Pass3PromptFn = Callable[
     [Sequence["LineRange"], Sequence["WordTimestamp"], Any, Sequence[str]], str
@@ -25,6 +25,7 @@ class WorkflowDefinition:
     wf_env_number: int | None = None
     optimized_pass4: bool = False
     allow_pass3_range_change: bool = True
+    pass3_enabled: bool = True
     pass1_fallback_enabled: bool = False
     two_call_enabled: bool = False
     pass1_prompt: Pass1PromptFn | None = None

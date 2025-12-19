@@ -575,53 +575,62 @@ class TwoPassFormatter:
                 raise FormatterError("行分割結果の範囲（from/to）が不正です")
             pass2_lines = lines
 
-            # Pass3: Validation (now always executed)
+            # Pass3: Validation + optional correction
             from src.llm.validators import detect_issues
-            if not enable_pass3:
-                logger.warning("enable_pass3=False は非推奨になりました。Pass3は常に実行されます。")
 
             issues = detect_issues(lines, updated_words)
-            logger.info("two-pass: pass3 start (%d issues detected)", len(issues))
-            for issue in issues:
-                logger.debug("  - %s", issue.description)
-
-            if progress_callback:
-                progress_callback("LLM Pass 3", 80)
-            pass3_prompt = self._build_pass3_prompt(lines, updated_words, issues)
-            logger.debug("Calling LLM for Pass 3. Prompt length: %d", len(pass3_prompt))
-            t_p3_start = time.perf_counter()
-            raw3, parsed3 = _call_llm_with_parse(
-                self._call_llm,
-                pass_label="pass3",
-                prompt=pass3_prompt,
-                model_override=self.pass3_model,
-                retries=2,
-                soft_fail=True,
-                log_sink=self,
-            )
-            t_p3_end = time.perf_counter()
-            record_pass_time(self.run_id, "pass3", t_p3_end - t_p3_start)
-            if parsed3:
-                pass3_lines = _parse_lines(parsed3)
-                pass3_lines = sorted(pass3_lines, key=lambda l: (l.start_idx, l.end_idx))
-                if pass3_lines and _has_contiguous_word_coverage(pass3_lines, len(updated_words)):
-                    if (
-                        not self.workflow_def.allow_pass3_range_change
-                        and not _has_same_line_ranges(pass2_lines, pass3_lines)
-                    ):
-                        logger.warning("Pass 3 changed line ranges; using Pass 2 output instead")
-                    else:
-                        lines = pass3_lines
-                elif pass3_lines:
-                    logger.warning(
-                        "Pass 3 returned invalid coverage (words=%d, lines=%d); using Pass 2 output instead",
-                        len(updated_words),
-                        len(pass3_lines),
-                    )
+            if not self.workflow_def.pass3_enabled:
+                if issues:
+                    logger.info("two-pass: pass3 skipped (pass3_disabled, issues=%d)", len(issues))
+                    for issue in issues:
+                        logger.debug("  - %s", issue.description)
                 else:
-                    logger.warning("Pass 3 returned empty lines, using Pass 2 output")
+                    logger.info("two-pass: pass3 skipped (pass3_disabled)")
             else:
-                logger.warning("Pass 3 parsing failed; using Pass 2 output")
+                if not enable_pass3:
+                    logger.warning("enable_pass3=False は非推奨になりました。Pass3は常に実行されます。")
+
+                logger.info("two-pass: pass3 start (%d issues detected)", len(issues))
+                for issue in issues:
+                    logger.debug("  - %s", issue.description)
+
+                if progress_callback:
+                    progress_callback("LLM Pass 3", 80)
+                pass3_prompt = self._build_pass3_prompt(lines, updated_words, issues)
+                logger.debug("Calling LLM for Pass 3. Prompt length: %d", len(pass3_prompt))
+                t_p3_start = time.perf_counter()
+                raw3, parsed3 = _call_llm_with_parse(
+                    self._call_llm,
+                    pass_label="pass3",
+                    prompt=pass3_prompt,
+                    model_override=self.pass3_model,
+                    retries=2,
+                    soft_fail=True,
+                    log_sink=self,
+                )
+                t_p3_end = time.perf_counter()
+                record_pass_time(self.run_id, "pass3", t_p3_end - t_p3_start)
+                if parsed3:
+                    pass3_lines = _parse_lines(parsed3)
+                    pass3_lines = sorted(pass3_lines, key=lambda l: (l.start_idx, l.end_idx))
+                    if pass3_lines and _has_contiguous_word_coverage(pass3_lines, len(updated_words)):
+                        if (
+                            not self.workflow_def.allow_pass3_range_change
+                            and not _has_same_line_ranges(pass2_lines, pass3_lines)
+                        ):
+                            logger.warning("Pass 3 changed line ranges; using Pass 2 output instead")
+                        else:
+                            lines = pass3_lines
+                    elif pass3_lines:
+                        logger.warning(
+                            "Pass 3 returned invalid coverage (words=%d, lines=%d); using Pass 2 output instead",
+                            len(updated_words),
+                            len(pass3_lines),
+                        )
+                    else:
+                        logger.warning("Pass 3 returned empty lines, using Pass 2 output")
+                else:
+                    logger.warning("Pass 3 parsing failed; using Pass 2 output")
 
             # Pass4: re-run only lines that violate length bounds
             fixed_lines: List[LineRange] = []
@@ -857,7 +866,7 @@ class TwoPassFormatter:
     def _build_pass1_prompt(self, raw_text: str, words: Sequence[WordTimestamp]) -> str:
         if self.workflow_def.pass1_prompt is None:
             raise FormatterError(f"未設定のワークフローです: {self.workflow}")
-        return self.workflow_def.pass1_prompt(raw_text, words)
+        return self.workflow_def.pass1_prompt(raw_text, words, self.glossary_terms)
 
     def _build_pass2_prompt(self, words: Sequence[WordTimestamp], *, max_chars: float) -> str:
         if self.workflow_def.pass2_prompt is None:

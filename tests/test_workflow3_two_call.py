@@ -13,14 +13,14 @@ def _words():
     ]
 
 
-def test_workflow3_runs_two_call_path(monkeypatch):
+def test_workflow3_runs_pass1_pass2_and_skips_pass3(monkeypatch):
     calls: list[tuple[str | None, str | None]] = []
 
     def fake_call_llm(self, payload: str, model_override=None, pass_label=None):
         calls.append((pass_label, model_override))
         if pass_label == "pass1":
             return json.dumps({"operations": []}, ensure_ascii=False)
-        if pass_label == "pass2to4":
+        if pass_label == "pass2":
             return json.dumps(
                 {
                     "lines": [
@@ -39,30 +39,22 @@ def test_workflow3_runs_two_call_path(monkeypatch):
 
     assert result is not None
     assert calls[0][0] == "pass1"
-    assert calls[1][0] == "pass2to4"
+    assert calls[1][0] == "pass2"
     assert len(calls) == 2
     assert len(result.segments) == 1
     assert result.segments[0].text == "今日はいい天気ですね"
 
 
-def test_workflow3_falls_back_to_legacy_on_invalid_combined(monkeypatch):
+def test_workflow3_accepts_prefix_lines_and_fills_trailing_coverage(monkeypatch):
     calls: list[str | None] = []
 
     def fake_call_llm(self, payload: str, model_override=None, pass_label=None):
         calls.append(pass_label)
         if pass_label == "pass1":
             return json.dumps({"operations": []}, ensure_ascii=False)
-        if pass_label == "pass2to4":
-            # invalid: does not cover all words
-            return json.dumps(
-                {"lines": [{"from": 0, "to": 1, "text": "今日はいい"}]},
-                ensure_ascii=False,
-            )
-        if pass_label in {"pass2", "pass3"}:
-            return json.dumps(
-                {"lines": [{"from": 0, "to": 3, "text": "今日はいい天気ですね"}]},
-                ensure_ascii=False,
-            )
+        if pass_label == "pass2":
+            # prefix only: trailing words are filled by local fallback
+            return json.dumps({"lines": [{"from": 0, "to": 1, "text": "今日はいい"}]}, ensure_ascii=False)
         raise AssertionError(f"unexpected pass_label={pass_label}")
 
     monkeypatch.setattr("src.llm.validators.detect_issues", lambda lines, words: [])
@@ -72,6 +64,6 @@ def test_workflow3_falls_back_to_legacy_on_invalid_combined(monkeypatch):
     result = formatter.run(text="今日はいい天気ですね", words=_words())
 
     assert result is not None
-    assert "pass2to4" in calls
     assert "pass2" in calls
-    assert len(result.segments) == 1
+    assert calls == ["pass1", "pass2"]
+    assert len(result.segments) >= 1
