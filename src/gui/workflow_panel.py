@@ -125,7 +125,7 @@ class WorkflowPanel(ttk.Frame):
         )
         workflow_combo.pack(side=tk.LEFT, padx=(4, 0))
         workflow_combo.bind("<<ComboboxSelected>>", self._on_workflow_changed)
-        ttk.Label(workflow_row, text="workflow2: 校正/最適化  workflow3: カスタム", foreground="#888888").pack(
+        ttk.Label(workflow_row, text="workflow2: 校正/最適化  workflow3: 校正→行分割", foreground="#888888").pack(
             side=tk.LEFT, padx=(8, 0)
         )
         
@@ -775,18 +775,24 @@ class WorkflowPanel(ttk.Frame):
 
     def _get_active_pass_names(self) -> list[str]:
         wf = get_workflow(self.workflow_var.get())
-        if wf.two_call_enabled and wf.pass2to4_prompt is not None:
-            return ["pass1", "pass2"]
-        return ["pass1", "pass2", "pass3", "pass4"]
+        return wf.active_pass_model_keys()
 
     def _sync_pass_models_to_provider(self, provider: str) -> None:
+        wf = get_workflow(self.workflow_var.get())
         mapping: dict[str, tk.StringVar] = {
             "pass1": self.pass1_model_var,
             "pass2": self.pass2_model_var,
             "pass3": self.pass3_model_var,
             "pass4": self.pass4_model_var,
         }
-        for pass_name in ("pass2", "pass3", "pass4"):
+        if wf.is_two_call_mode():
+            target_passes = ["pass2", "pass3", "pass4"]
+        else:
+            target_passes = ["pass2"]
+            if wf.pass3_enabled:
+                target_passes.append("pass3")
+            target_passes.append("pass4")
+        for pass_name in target_passes:
             var = mapping[pass_name]
             current = (var.get() or "").strip()
             if current and self._get_provider_for_model(current) == provider:
@@ -868,7 +874,7 @@ class WorkflowPanel(ttk.Frame):
         self._pass_model_combos = []
 
         wf = get_workflow(self.workflow_var.get())
-        if wf.two_call_enabled and wf.pass2to4_prompt is not None:
+        if wf.is_two_call_mode():
             rows = [
                 ("Pass1:", "pass1", self.pass1_model_var),
                 ("Pass2-4:", "pass2", self.pass2_model_var),
@@ -877,9 +883,10 @@ class WorkflowPanel(ttk.Frame):
             rows = [
                 ("Pass1:", "pass1", self.pass1_model_var),
                 ("Pass2:", "pass2", self.pass2_model_var),
-                ("Pass3:", "pass3", self.pass3_model_var),
                 ("Pass4:", "pass4", self.pass4_model_var),
             ]
+            if wf.pass3_enabled:
+                rows.insert(2, ("Pass3:", "pass3", self.pass3_model_var))
 
         models = self._get_all_models()
         for label_text, pass_name, var in rows:

@@ -33,3 +33,15 @@ class WorkflowDefinition:
     pass3_prompt: Pass3PromptFn | None = None
     pass4_prompt: Pass4PromptFn | None = None
     pass2to4_prompt: Pass2to4PromptFn | None = None
+
+    def is_two_call_mode(self) -> bool:
+        return self.two_call_enabled and self.pass2to4_prompt is not None
+
+    def active_pass_model_keys(self) -> list[str]:
+        if self.is_two_call_mode():
+            return ["pass1", "pass2"]
+        keys = ["pass1", "pass2"]
+        if self.pass3_enabled:
+            keys.append("pass3")
+        keys.append("pass4")
+        return keys
