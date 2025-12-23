@@ -1,0 +1,295 @@
+
+
+===== pass1 =====
+{
+  "operations": [
+    {"type": "replace", "start_idx": 1, "end_idx": 3, "text": "いろんな、"},
+    {"type": "replace", "start_idx": 8, "end_idx": 11, "text": "いろいろ"},
+    {"type": "replace", "start_idx": 17, "end_idx": 18, "text": "残念"},
+    {"type": "replace", "start_idx": 20, "end_idx": 21, "text": "けれども、"},
+    {"type": "replace", "start_idx": 24, "end_idx": 29, "text": "なんていうんだろうかな、"},
+    {"type": "replace", "start_idx": 30, "end_idx": 32, "text": "参政党"},
+    {"type": "replace", "start_idx": 35, "end_idx": 36, "text": "運営"},
+    {"type": "replace", "start_idx": 42, "end_idx": 44, "text": "垣間"},
+    {"type": "replace", "start_idx": 47, "end_idx": 48, "text": "機会"},
+    {"type": "replace", "start_idx": 54, "end_idx": 56, "text": "考え方"},
+    {"type": "replace", "start_idx": 66, "end_idx": 67, "text": "けれども、"},
+    {"type": "replace", "start_idx": 70, "end_idx": 71, "text": "極端"},
+    {"type": "replace", "start_idx": 89, "end_idx": 90, "text": "神谷"},
+    {"type": "replace", "start_idx": 107, "end_idx": 108, "text": "神谷"},
+    {"type": "replace", "start_idx": 118, "end_idx": 119, "text": "一切"},
+    {"type": "delete", "start_idx": 127, "end_idx": 128},
+    {"type": "replace", "start_idx": 131, "end_idx": 133, "text": "参政党"},
+    {"type": "delete", "start_idx": 137, "end_idx": 470},
+    {"type": "replace", "start_idx": 471, "end_idx": 475, "text": "失礼しちゃった"},
+    {"type": "replace", "start_idx": 484, "end_idx": 485, "text": "通り"},
+    {"type": "replace", "start_idx": 486, "end_idx": 488, "text": "と思いましたら、"},
+    {"type": "replace", "start_idx": 489, "end_idx": 490, "text": "ぜひ"},
+    {"type": "replace", "start_idx": 494, "end_idx": 499, "text": "高評価ボタン"},
+    {"type": "replace", "start_idx": 501, "end_idx": 510, "text": "ご支援をよろしくお願いいたします。"}
+  ]
+}
+
+===== pass2 =====
+```json
+{
+  "lines": [
+    {
+      "from": 0,
+      "to": 4,
+      "text": "ちょっといろんな、まあここでは"
+    },
+    {
+      "from": 5,
+      "to": 11,
+      "text": "ちょっといろいろ言えないのが"
+    },
+    {
+      "from": 12,
+      "to": 14,
+      "text": "残念なんですけれども"
+    },
+    {
+      "from": 15,
+      "to": 17,
+      "text": "まあ、ちょっと、なんていうんだろうかな"
+    },
+    {
+      "from": 18,
+      "to": 25,
+      "text": "参政党の党運営みたいなところを"
+    },
+    {
+      "from": 26,
+      "to": 29,
+      "text": "ちょっと、垣間見る"
+    },
+    {
+      "from": 30,
+      "to": 34,
+      "text": "機会がありましたので"
+    },
+    {
+      "from": 35,
+      "to": 39,
+      "text": "まあ、考え方としては"
+    },
+    {
+      "from": 40,
+      "to": 47,
+      "text": "わからなくもないんだけれども、ちょっと"
+    },
+    {
+      "from": 48,
+      "to": 53,
+      "text": "ちょっと極端じゃないのかなっていう"
+    },
+    {
+      "from": 54,
+      "to": 56,
+      "text": "気はします"
+    },
+    {
+      "from": 57,
+      "to": 65,
+      "text": "だから、まあ、逆に言うと、それだけ"
+    },
+    {
+      "from": 66,
+      "to": 71,
+      "text": "その神谷さんの自由な"
+    },
+    {
+      "from": 72,
+      "to": 81,
+      "text": "こう、自由度が高すぎるというか"
+    },
+    {
+      "from": 82,
+      "to": 87,
+      "text": "なんで神谷さんだけそれ"
+    },
+    {
+      "from": 88,
+      "to": 93,
+      "text": "できて、他の人は"
+    },
+    {
+      "from": 94,
+      "to": 100,
+      "text": "一切できないのっていうのが"
+    },
+    {
+      "from": 101,
+      "to": 106,
+      "text": "まあ、これはでも参政党のね"
+    },
+    {
+      "from": 107,
+      "to": 112,
+      "text": "まあ、失礼しちゃった方がいいかな"
+    },
+    {
+      "from": 113,
+      "to": 115,
+      "text": "ということで、皆さん、なるほど"
+    },
+    {
+      "from": 116,
+      "to": 118,
+      "text": "その通りと思いましたら"
+    },
+    {
+      "from": 119,
+      "to": 124,
+      "text": "ぜひチャンネル登録と高評価ボタンで"
+    },
+    {
+      "from": 125,
+      "to": 125,
+      "text": "ご支援をよろしくお願いいたします"
+    },
+    {
+      "from": 126,
+      "to": 126,
+      "text": "ありがとうございました"
+    }
+  ]
+}
+```
+
+===== pass3 =====
+{
+  "lines": [
+    {
+      "from": 0,
+      "to": 4,
+      "text": "ちょっといろんな、まあここでは"
+    },
+    {
+      "from": 5,
+      "to": 11,
+      "text": "ちょっといろいろ言えないのが"
+    },
+    {
+      "from": 12,
+      "to": 14,
+      "text": "残念なんですけれども"
+    },
+    {
+      "from": 15,
+      "to": 16,
+      "text": "まあ、ちょっと、"
+    },
+    {
+      "from": 17,
+      "to": 17,
+      "text": "なんていうんだろうかな"
+    },
+    {
+      "from": 18,
+      "to": 25,
+      "text": "参政党の党運営みたいなところを"
+    },
+    {
+      "from": 26,
+      "to": 29,
+      "text": "ちょっと、垣間見る"
+    },
+    {
+      "from": 30,
+      "to": 34,
+      "text": "機会がありましたので"
+    },
+    {
+      "from": 35,
+      "to": 39,
+      "text": "まあ、考え方としては"
+    },
+    {
+      "from": 40,
+      "to": 46,
+      "text": "わからなくもないんだけれども、"
+    },
+    {
+      "from": 47,
+      "to": 48,
+      "text": "ちょっと、ちょっと"
+    },
+    {
+      "from": 49,
+      "to": 53,
+      "text": "極端じゃないのかなっていう"
+    },
+    {
+      "from": 54,
+      "to": 56,
+      "text": "気はします"
+    },
+    {
+      "from": 57,
+      "to": 65,
+      "text": "だから、まあ、逆に言うと、それだけ"
+    },
+    {
+      "from": 66,
+      "to": 71,
+      "text": "その神谷さんの自由な"
+    },
+    {
+      "from": 72,
+      "to": 81,
+      "text": "こう、自由度が高すぎるというか"
+    },
+    {
+      "from": 82,
+      "to": 87,
+      "text": "なんで神谷さんだけそれ"
+    },
+    {
+      "from": 88,
+      "to": 93,
+      "text": "できて、他の人は"
+    },
+    {
+      "from": 94,
+      "to": 100,
+      "text": "一切できないのっていうのが"
+    },
+    {
+      "from": 101,
+      "to": 106,
+      "text": "まあ、これはでも参政党のね"
+    },
+    {
+      "from": 107,
+      "to": 112,
+      "text": "まあ、失礼しちゃった方がいいかな"
+    },
+    {
+      "from": 113,
+      "to": 115,
+      "text": "ということで、皆さん、なるほど"
+    },
+    {
+      "from": 116,
+      "to": 118,
+      "text": "その通りと思いましたら"
+    },
+    {
+      "from": 119,
+      "to": 124,
+      "text": "ぜひチャンネル登録と高評価ボタンで"
+    },
+    {
+      "from": 125,
+      "to": 125,
+      "text": "ご支援をよろしくお願いいたします"
+    },
+    {
+      "from": 126,
+      "to": 126,
+      "text": "ありがとうございました"
+    }
+  ]
+}

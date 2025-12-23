@@ -13,7 +13,7 @@ ffmpeg_libs = glob.glob('/opt/homebrew/Cellar/ffmpeg/*/lib/*.dylib')
 for lib in ffmpeg_libs:
     binaries.append((lib, 'ffmpeg_bin'))
 
-hiddenimports = ['mlx_whisper', 'mlx']
+hiddenimports = ['mlx_whisper', 'mlx', 'whisper']
 
 # mlx_whisper
 tmp_ret = collect_all('mlx_whisper')
@@ -21,6 +21,10 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 # mlx
 tmp_ret = collect_all('mlx')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+
+# whisper (openai-whisper)
+tmp_ret = collect_all('whisper')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 # 注意: collect_all('av') は使用しない

@@ -1,6 +1,7 @@
 """Shared helpers for the Phase 1 PoC transcription flow."""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
@@ -12,6 +13,7 @@ import time
 
 from src.llm.two_pass import TwoPassResult
 from src.llm.formatter import FormatterError
+from src.llm.chunking import split_words_into_time_chunks
 from src.transcribe import (
     TranscriptionConfig,
     TranscriptionResult,
@@ -78,13 +80,14 @@ class PocRunOptions:
 def resolve_models(raw: str | None) -> List[str]:
     """ランナー一覧文字列から使用するランナー slug のリストを返す。
 
-    - raw が None/空文字の場合は「プラットフォーム別のデフォルト」を選ぶ
-      - macOS (darwin): MLX ランナー（'mlx'）
-      - それ以外（Windows / Linux 等）: OpenAI Whisper ランナー（'openai'）
+    - raw が None/空文字の場合は 'openai'（OpenAI Whisper ローカル）をデフォルトとする
+      - openai-whisper は mlx-whisper より認識精度が高い傾向がある
+      - mlx は高速だが、一部の音声で認識漏れが発生することがある
     """
     if not raw:
         runners = available_runners()
-        default_slug = "mlx" if sys.platform == "darwin" else "openai"
+        # デフォルトはopenai-whisper (local)。mlxより精度が高い
+        default_slug = "openai"
         return [slug for slug in runners if slug == default_slug] or runners
     requested = [token.strip() for token in raw.split(",") if token.strip()]
     unknown = [slug for slug in requested if slug not in available_runners()]
@@ -222,6 +225,12 @@ def execute_poc_run(
                         else:
                             from src.llm.two_pass import TwoPassFormatter as Formatter
 
+                        max_gap_duration = None
+                        if wf.slug == "workflow2":
+                            from src.llm.workflows.common import MAX_GAP_DURATION_SEC
+
+                            max_gap_duration = MAX_GAP_DURATION_SEC
+
                         return Formatter(
                             llm_provider=options.llm_provider,
                             temperature=options.llm_temperature,
@@ -235,22 +244,34 @@ def execute_poc_run(
                             run_id=run_id,
                             source_name=input_path.name,
                             start_delay=options.start_delay,
+                            max_gap_duration=max_gap_duration,
                             raw_log_dir=raw_llm_log_dir,
                         )
 
                     two_pass = _build_formatter(options.workflow)
                     # Phase 2-5: LLM passes
                     t_llm_start = time.perf_counter()
-                    if options.progress_callback:
-                        options.progress_callback("LLM Pass 1", 40)
-                    tp_result: TwoPassResult | None = two_pass.run(
-                        text=result.text,
-                        words=result.words or [],
-                        max_chars=float(options.line_max_chars),
-                        progress_callback=options.progress_callback,
-                    )
-                    if tp_result:
-                        subtitle_text = tp_result.srt_text
+                    if options.workflow == "workflow2":
+                        subtitle_text = _run_workflow2_chunked_two_pass(
+                            formatter_builder=_build_formatter,
+                            text=result.text,
+                            words=result.words or [],
+                            max_chars=float(options.line_max_chars),
+                            start_delay=float(options.start_delay),
+                            progress_callback=options.progress_callback,
+                            source_name=input_path.name,
+                        )
+                    else:
+                        if options.progress_callback:
+                            options.progress_callback("LLM Pass 1", 40)
+                        tp_result: TwoPassResult | None = two_pass.run(
+                            text=result.text,
+                            words=result.words or [],
+                            max_chars=float(options.line_max_chars),
+                            progress_callback=options.progress_callback,
+                        )
+                        if tp_result:
+                            subtitle_text = tp_result.srt_text
                     t_llm_end = time.perf_counter()
                     logger.info(
                         "llm_two_pass_done provider=%s audio=%s duration_sec=%.3f",
@@ -376,6 +397,174 @@ def build_single_block(result: TranscriptionResult) -> List[dict]:
             "sentences": [],
         }
     ]
+
+
+def _run_workflow2_chunked_two_pass(
+    *,
+    formatter_builder: Callable[[str], Any],
+    text: str,
+    words: Sequence[Any],
+    max_chars: float,
+    start_delay: float,
+    progress_callback: Callable[[str, int], None] | None,
+    source_name: str,
+) -> str | None:
+    if not words:
+        return None
+
+    # 5分（=300秒）目安で分割し、できるだけ無音ギャップ付近で境界を切る
+    chunks = split_words_into_time_chunks(words, chunk_sec=300.0, snap_window_sec=15.0, min_gap_sec=0.2)
+    if len(chunks) <= 1:
+        if progress_callback:
+            progress_callback("LLM Pass 1", 40)
+        formatter = formatter_builder("workflow2")
+        result = formatter.run(
+            text=text,
+            words=words,
+            max_chars=max_chars,
+            progress_callback=progress_callback,
+        )
+        return result.srt_text if result else None
+
+    if progress_callback:
+        progress_callback(f"LLM チャンク処理開始（{len(chunks)}分割）", 40)
+
+    def _run_chunk(chunk_index: int, start_idx: int, end_idx: int) -> TwoPassResult | None:
+        chunk_words = list(words[start_idx : end_idx + 1])
+        chunk_text = "".join((getattr(w, "word", "") or "") for w in chunk_words)
+        formatter = formatter_builder("workflow2")
+        formatter.source_name = f"{source_name}_chunk{chunk_index:03d}"
+        formatter.start_delay = 0.0
+        return formatter.run(
+            text=chunk_text,
+            words=chunk_words,
+            max_chars=max_chars,
+            progress_callback=None,
+        )
+
+    max_workers = min(10, len(chunks))
+    results: Dict[int, TwoPassResult] = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_run_chunk, c.index, c.start_idx, c.end_idx): c.index
+            for c in chunks
+        }
+        done = 0
+        for future in as_completed(futures):
+            chunk_idx = futures[future]
+            chunk_result = future.result()
+            results[chunk_idx] = chunk_result or TwoPassResult(segments=[])
+            done += 1
+            if progress_callback:
+                progress = 40 + int(50 * (done / max(len(chunks), 1)))
+                progress_callback(f"LLM チャンク処理 {done}/{len(chunks)}", progress)
+
+    merged_segments = []
+    for i in sorted(results.keys()):
+        merged_segments.extend(results[i].segments)
+
+    from src.llm.workflows.common import MAX_GAP_DURATION_SEC
+
+    _normalize_segments_for_output(
+        merged_segments,
+        start_delay=start_delay,
+        fill_gaps=True,
+        max_gap_duration=MAX_GAP_DURATION_SEC,
+    )
+    if progress_callback:
+        progress_callback("LLM チャンク統合完了", 95)
+
+    return TwoPassResult(segments=merged_segments).srt_text
+
+
+def _normalize_segments_for_output(
+    segments: List[Any],
+    *,
+    start_delay: float,
+    fill_gaps: bool = True,
+    max_gap_duration: float | None = None,
+    gap_padding: float = 0.15,
+) -> None:
+    if not segments:
+        return
+
+    segments.sort(key=lambda s: (float(getattr(s, "start", 0.0)), float(getattr(s, "end", 0.0))))
+
+    # 重複解消: 前のセグメントのendを現在のstartに制限することで、
+    # ワードのタイムスタンプを優先し、ドリフトの蓄積を防ぐ
+    for i in range(1, len(segments)):
+        prev_seg = segments[i - 1]
+        curr_seg = segments[i]
+        prev_end = float(getattr(prev_seg, "end", 0.0))
+        curr_start = float(getattr(curr_seg, "start", 0.0))
+        if prev_end > curr_start:
+            # 重複がある場合、前のセグメントのendを現在のstartに制限
+            prev_seg.end = curr_start
+
+    # end < startの異常ケースを補正
+    for seg in segments:
+        start = float(getattr(seg, "start", 0.0))
+        end = float(getattr(seg, "end", start))
+        if end < start:
+            seg.end = start + 0.1
+
+    if fill_gaps:
+        _fill_segment_gaps(segments, max_gap_duration=max_gap_duration, gap_padding=gap_padding)
+
+    try:
+        start_delay = float(start_delay)
+    except (TypeError, ValueError):
+        start_delay = 0.0
+
+    if start_delay > 0 and len(segments) > 1:
+        original_last_end = float(getattr(segments[-1], "end", 0.0))
+
+        for i in range(1, len(segments)):
+            new_start = float(getattr(segments[i], "start", 0.0)) + start_delay
+            if i == len(segments) - 1:
+                max_start = max(original_last_end - 0.1, 0.0)
+                if new_start > max_start:
+                    new_start = max_start
+            prev_end = float(getattr(segments[i - 1], "end", 0.0))
+            if new_start < prev_end:
+                new_start = prev_end
+            segments[i].start = new_start
+
+        if fill_gaps:
+            _fill_segment_gaps(segments, max_gap_duration=max_gap_duration, gap_padding=gap_padding)
+
+        segments[-1].end = original_last_end
+        if segments[-1].end < segments[-1].start:
+            segments[-1].start = max(segments[-1].end - 0.1, 0.0)
+
+    for i, seg in enumerate(segments, start=1):
+        seg.index = i
+
+
+def _fill_segment_gaps(
+    segments: List[Any],
+    *,
+    max_gap_duration: float | None = None,
+    gap_padding: float = 0.0,
+) -> None:
+    if not segments:
+        return
+
+    for i in range(len(segments) - 1):
+        current = segments[i]
+        nxt = segments[i + 1]
+        gap = float(getattr(nxt, "start", 0.0)) - float(getattr(current, "end", 0.0))
+
+        if gap <= 0:
+            continue
+
+        if max_gap_duration is not None and gap > float(max_gap_duration):
+            if gap_padding > 0:
+                desired_end = float(getattr(current, "end", 0.0)) + float(gap_padding)
+                current.end = min(desired_end, float(getattr(nxt, "start", 0.0)))
+            continue
+
+        current.end = float(getattr(nxt, "start", 0.0))
 
 
 def save_result(

@@ -15,6 +15,7 @@ from typing import List, Sequence, Dict, Any, Iterable, Callable
 from src.config import get_settings
 from src.llm.formatter import FormatterError, get_provider, FormatterRequest
 from src.llm.prompts import PromptPayload
+from src.llm.workflows.common import MAX_LINE_DURATION_SEC
 from src.llm.workflows.registry import get_workflow
 from src.transcribe.base import WordTimestamp
 from src.llm.usage_metrics import record_pass_time
@@ -22,6 +23,24 @@ from src.utils.glossary import DEFAULT_GLOSSARY_TERMS, normalize_glossary_terms
 
 logger = logging.getLogger(__name__)
 RAW_LOG_DIR = Path("logs/llm_raw")
+LINES_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "lines": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "from": {"type": "integer"},
+                    "to": {"type": "integer"},
+                    "text": {"type": "string"},
+                },
+                "required": ["from", "to", "text"],
+            },
+        },
+    },
+    "required": ["lines"],
+}
 
 
 @dataclass(slots=True)
@@ -486,6 +505,14 @@ class TwoPassFormatter:
             metadata["source_name"] = self.source_name
         if pass_label:
             metadata["pass_label"] = pass_label
+        if (
+            pass_label in {"pass2", "pass3", "pass4"}
+            and self.provider_slug in {"google", "openai"}
+            and self.workflow == "workflow2"
+        ):
+            metadata["structured_output_mime_type"] = "application/json"
+            metadata["structured_output_schema"] = LINES_SCHEMA
+            metadata["structured_output_name"] = f"{pass_label}_lines"
         
         req = FormatterRequest(
             block_text="",
@@ -648,6 +675,7 @@ class TwoPassFormatter:
             lines = _parse_lines(parsed2)
             if not lines:
                 raise FormatterError("行分割結果が空です")
+
             lines = sorted(lines, key=lambda l: (l.start_idx, l.end_idx))
             if not _has_contiguous_prefix_coverage(lines, len(updated_words)):
                 normalized = _try_normalize_lines_for_coverage(
@@ -656,9 +684,13 @@ class TwoPassFormatter:
                     require_full_coverage=False,
                 )
                 if normalized is None:
-                    raise FormatterError("行分割結果の範囲（from/to）が不正です")
-                lines, reason = normalized
-                logger.warning("pass2: normalized line ranges (%s)", reason)
+                    if self.workflow == "workflow2":
+                        logger.warning("pass2: invalid line coverage; proceeding to pass3")
+                    else:
+                        raise FormatterError("行分割結果の範囲（from/to）が不正です")
+                else:
+                    lines, reason = normalized
+                    logger.warning("pass2: normalized line ranges (%s)", reason)
             pass2_lines = lines
 
             # Pass3: Validation + optional correction
@@ -728,16 +760,29 @@ class TwoPassFormatter:
                 else:
                     logger.warning("Pass 3 parsing failed; using Pass 2 output")
 
-            # Pass4: re-run only lines that violate length bounds
+            # Pass4: re-run lines that violate length or duration bounds
             fixed_lines: List[LineRange] = []
-            pass4_needed = any(self._needs_pass4(line) for line in lines)
+            pass4_needed = any(self._needs_pass4(line, updated_words) for line in lines)
             if pass4_needed and progress_callback:
                 progress_callback("LLM Pass 4", 95)
+            max_chars = getattr(self, "_current_line_max_chars", 17)
             for line in lines:
-                if self._needs_pass4(line):
-                    logger.info("pass4: line length %d out of bounds, retrying LLM", len(line.text))
+                length_issue = len(line.text) > max_chars or len(line.text) < 5
+                duration = self._line_duration_seconds(line, updated_words)
+                duration_issue = duration is not None and duration > MAX_LINE_DURATION_SEC
+                if length_issue or duration_issue:
+                    detail = []
+                    if length_issue:
+                        detail.append(f"len={len(line.text)}")
+                    if duration_issue:
+                        detail.append(f"duration={duration:.2f}s")
+                    logger.info("pass4: line needs retry (%s)", ", ".join(detail))
                     t_p4_start = time.perf_counter()
-                    repl = self._run_pass4_fix(line, updated_words)
+                    repl = self._run_pass4_fix(
+                        line,
+                        updated_words,
+                        enforce_duration=duration_issue,
+                    )
                     t_p4_end = time.perf_counter()
                     record_pass_time(self.run_id, "pass4", t_p4_end - t_p4_start)
                     fixed_lines.extend(repl)
@@ -762,7 +807,6 @@ class TwoPassFormatter:
         from src.alignment.srt import SubtitleSegment
 
         segments: List[SubtitleSegment] = []
-        last_end_time = 0.0
 
         # LLM が返す lines の順序は必ずしも時系列（start_idx順）とは限らないため、
         # タイムコード生成前に安定した順序へ正規化する。
@@ -777,19 +821,24 @@ class TwoPassFormatter:
             start = words[line.start_idx].start or 0.0
             end = words[line.end_idx].end or start
 
-            # タイムスタンプの巻き戻りだけはローカルで補正する
-            if start < last_end_time:
-                logger.warning(
-                    "Timestamp backward jump detected (clamped): %.2f -> %.2f", start, last_end_time
-                )
-                start = last_end_time
-
             # end < start になってしまった場合の最小補正
             if end < start:
                 end = start + 0.1
 
             segments.append(SubtitleSegment(index=0, start=start, end=end, text=current_text))
-            last_end_time = end
+
+        # 重複解消: 前のセグメントのendを現在のstartに制限することで、
+        # ワードのタイムスタンプを優先し、ドリフトの蓄積を防ぐ
+        for i in range(1, len(segments)):
+            prev_seg = segments[i - 1]
+            curr_seg = segments[i]
+            if prev_seg.end > curr_seg.start:
+                logger.debug(
+                    "Overlap detected: adjusting prev.end %.2f -> %.2f",
+                    prev_seg.end,
+                    curr_seg.start,
+                )
+                prev_seg.end = curr_seg.start
 
         # セグメント間の「タイムコードの空白時間」を埋めるため、
         # 次のセグメントの開始時刻まで前のセグメントの end を延長する。
@@ -975,16 +1024,39 @@ class TwoPassFormatter:
             raise FormatterError(f"未設定のワークフローです: {self.workflow}")
         return self.workflow_def.pass3_prompt(lines, words, issues, self.glossary_terms)
 
-    def _needs_pass4(self, line: LineRange) -> bool:
+    def _line_duration_seconds(
+        self,
+        line: LineRange,
+        words: Sequence[WordTimestamp],
+    ) -> float | None:
+        if line.start_idx < 0 or line.end_idx >= len(words):
+            return None
+        start = getattr(words[line.start_idx], "start", None)
+        end = getattr(words[line.end_idx], "end", None)
+        try:
+            return float(end) - float(start)
+        except (TypeError, ValueError):
+            return None
+
+    def _needs_pass4(self, line: LineRange, words: Sequence[WordTimestamp]) -> bool:
         max_chars = getattr(self, "_current_line_max_chars", 17)
-        return len(line.text) > max_chars or len(line.text) < 5
+        if len(line.text) > max_chars or len(line.text) < 5:
+            return True
+        duration = self._line_duration_seconds(line, words)
+        return duration is not None and duration > MAX_LINE_DURATION_SEC
 
     def _build_pass4_prompt(self, line: LineRange, words: Sequence[WordTimestamp]) -> str:
         if self.workflow_def.pass4_prompt is None:
             raise FormatterError(f"未設定のワークフローです: {self.workflow}")
         return self.workflow_def.pass4_prompt(line, words, getattr(self, "_current_line_max_chars", 17))
 
-    def _run_pass4_fix(self, line: LineRange, words: Sequence[WordTimestamp]) -> List[LineRange]:
+    def _run_pass4_fix(
+        self,
+        line: LineRange,
+        words: Sequence[WordTimestamp],
+        *,
+        enforce_duration: bool = False,
+    ) -> List[LineRange]:
         prompt = self._build_pass4_prompt(line, words)
         raw, parsed = _call_llm_with_parse(
             self._call_llm,
@@ -999,7 +1071,12 @@ class TwoPassFormatter:
             repl = _parse_lines(parsed)
             if repl:
                 repl = sorted(repl, key=lambda l: (l.start_idx, l.end_idx))
-                if self._is_valid_pass4_replacement(line, repl):
+                if self._is_valid_pass4_replacement(
+                    line,
+                    repl,
+                    words,
+                    enforce_duration=enforce_duration,
+                ):
                     return repl
                 logger.warning(
                     "pass4 returned invalid ranges; keeping original line (%d-%d)",
@@ -1009,11 +1086,19 @@ class TwoPassFormatter:
         logger.warning("pass4 failed or empty; keeping original line (%d-%d)", line.start_idx, line.end_idx)
         return [line]
 
-    def _is_valid_pass4_replacement(self, original: LineRange, repl: Sequence[LineRange]) -> bool:
+    def _is_valid_pass4_replacement(
+        self,
+        original: LineRange,
+        repl: Sequence[LineRange],
+        words: Sequence[WordTimestamp],
+        *,
+        enforce_duration: bool = False,
+    ) -> bool:
         if not repl:
             return False
         max_chars = getattr(self, "_current_line_max_chars", 17)
         prev_end = original.start_idx - 1
+        durations: List[float | None] = []
         for line in repl:
             if line.start_idx < original.start_idx or line.end_idx > original.end_idx:
                 return False
@@ -1023,8 +1108,15 @@ class TwoPassFormatter:
                 return False
             if len(line.text) < 5 or len(line.text) > max_chars:
                 return False
+            if enforce_duration:
+                durations.append(self._line_duration_seconds(line, words))
             prev_end = line.end_idx
-        return prev_end == original.end_idx
+        if prev_end != original.end_idx:
+            return False
+        if enforce_duration and durations and all(d is not None for d in durations):
+            if any(d > MAX_LINE_DURATION_SEC for d in durations):
+                return False
+        return True
 
 
 __all__ = ["TwoPassFormatter", "TwoPassResult"]

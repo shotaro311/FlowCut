@@ -47,6 +47,7 @@ class GuiController:
         audio_path: Path,
         *,
         subtitle_dir: Path | None = None,
+        whisper_runner: str | None = None,
         llm_provider: str | None = None,
         llm_profile: str | None = None,
         workflow: str = "workflow1",
@@ -116,7 +117,7 @@ class GuiController:
                     options.timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
 
                     audio_files = ensure_audio_files([audio_path])
-                    model_slugs = resolve_models(None)
+                    model_slugs = resolve_models(whisper_runner)
                     result_paths = execute_poc_run(audio_files, model_slugs, options)
                     t_end = time.perf_counter()
                     total_elapsed_sec = max(0.0, t_end - t_start)

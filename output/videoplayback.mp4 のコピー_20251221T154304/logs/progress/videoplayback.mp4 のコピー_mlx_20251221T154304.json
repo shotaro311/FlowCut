@@ -1,0 +1,61 @@
+{
+  "run_id": "videoplayback.mp4 のコピー_mlx_20251221T154304",
+  "audio_file": "docs/sample/videoplayback.mp4 のコピー_audio.wav",
+  "model": "mlx",
+  "total_blocks": 1,
+  "llm_provider": "google",
+  "status": "completed",
+  "created_at": "2025-12-21T15:49:58",
+  "updated_at": "2025-12-21T15:49:58",
+  "completed_blocks": 1,
+  "blocks": [
+    {
+      "index": 1,
+      "status": "completed",
+      "started_at": "2025-12-21T15:49:58",
+      "completed_at": "2025-12-21T15:49:58"
+    }
+  ],
+  "metadata": {
+    "runner": "mlx",
+    "model": "mlx-community/whisper-large-v3-mlx",
+    "language": null,
+    "simulate": false,
+    "requested_at": "20251221T154304",
+    "options": {
+      "language": null,
+      "chunk_size": null,
+      "simulate": false,
+      "llm_provider": "google",
+      "llm_profile": null,
+      "workflow": "workflow2",
+      "llm_pass1_model": null,
+      "llm_pass2_model": null,
+      "llm_pass3_model": null,
+      "llm_pass4_model": null,
+      "rewrite": null,
+      "llm_temperature": null,
+      "llm_timeout": null,
+      "glossary_terms": null,
+      "start_delay": 0.0,
+      "line_max_chars": 17,
+      "keep_extracted_audio": false,
+      "save_logs": true,
+      "enable_pass5": false,
+      "pass5_max_chars": 17,
+      "pass5_provider": null,
+      "pass5_model": null
+    },
+    "subtitle_path": "output/videoplayback.mp4 のコピー_20251221T154304/videoplayback.mp4 のコピー_mlx_20251221T154304.srt",
+    "total_elapsed_sec": 413.68,
+    "total_elapsed_time": "6m 53.68s",
+    "stage_timings_sec": {
+      "transcribe_sec": 114.3,
+      "llm_two_pass_sec": 299.32
+    },
+    "stage_timings_time": {
+      "transcribe_sec": "1m 54.30s",
+      "llm_two_pass_sec": "4m 59.32s"
+    }
+  }
+}

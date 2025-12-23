@@ -1,0 +1,23 @@
+
+
+===== pass1 =====
+{"operations": []}
+
+===== pass2 =====
+{
+  "lines": [
+    {
+      "from": 0,
+      "to": 3,
+      "text": "mlx Simulated transcript for"
+    },
+    {
+      "from": 4,
+      "to": 5,
+      "text": "videoplayback.mp4 のコピー_audio"
+    }
+  ]
+}
+
+===== pass3 =====
+{"lines":[{"from":0,"to":1,"text":"mlx Simulated"},{"from":2,"to":3,"text":"transcript for"},{"from":4,"to":4,"text":"videoplayback.mp4"},{"from":5,"to":5,"text":"のコピー_audio"}]}

@@ -49,7 +49,7 @@ def test_workflow2_writes_llm_raw_on_api_error(tmp_path, monkeypatch):
     assert "[API ERROR]" in raw_files[0].read_text(encoding="utf-8")
 
 
-def test_workflow2_pass1_model_fallback(monkeypatch):
+def test_workflow2_pass1_does_not_fallback(monkeypatch):
     monkeypatch.setenv("LLM_PASS1_MODEL", "pro-model")
     monkeypatch.setenv("LLM_WF2_PASS1_MODEL", "flash-model")
     reload_settings()
@@ -60,10 +60,6 @@ def test_workflow2_pass1_model_fallback(monkeypatch):
         calls.append((pass_label, model_override))
         if pass_label == "pass1" and model_override == "flash-model":
             raise FormatterError("Google Gemini API Error: 400 Request too large")
-        if pass_label == "pass1":
-            return json.dumps({"operations": []}, ensure_ascii=False)
-        if pass_label in {"pass2", "pass3"}:
-            return json.dumps({"lines": [{"from": 0, "to": 2, "text": "テストです"}]}, ensure_ascii=False)
         raise AssertionError(f"unexpected pass_label={pass_label}")
 
     monkeypatch.setattr("src.llm.validators.detect_issues", lambda lines, words: [])
@@ -80,8 +76,7 @@ def test_workflow2_pass1_model_fallback(monkeypatch):
         WordTimestamp(word="です", start=0.2, end=0.4),
         WordTimestamp(word="ね", start=0.4, end=0.6),
     ]
-    result = formatter.run(text="テストですね", words=words, progress_callback=None)
+    with pytest.raises(FormatterError):
+        formatter.run(text="テストですね", words=words, progress_callback=None)
 
-    assert result is not None
-    assert calls[0] == ("pass1", "flash-model")
-    assert calls[1] == ("pass1", "pro-model")
+    assert calls == [("pass1", "flash-model")]

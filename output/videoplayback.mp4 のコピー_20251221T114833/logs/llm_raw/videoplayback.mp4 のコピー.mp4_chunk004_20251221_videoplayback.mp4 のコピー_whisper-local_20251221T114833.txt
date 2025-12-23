@@ -1,0 +1,140 @@
+
+
+===== pass1 =====
+{
+  "operations": [
+    {"type": "replace", "start_idx": 1, "end_idx": 3, "text": "いろんな、"},
+    {"type": "replace", "start_idx": 8, "end_idx": 11, "text": "いろいろ"},
+    {"type": "replace", "start_idx": 12, "end_idx": 14, "text": "言えない"},
+    {"type": "replace", "start_idx": 17, "end_idx": 18, "text": "残念"},
+    {"type": "replace", "start_idx": 30, "end_idx": 32, "text": "参政党"},
+    {"type": "replace", "start_idx": 35, "end_idx": 36, "text": "運営"},
+    {"type": "replace", "start_idx": 42, "end_idx": 46, "text": "垣間見る"},
+    {"type": "replace", "start_idx": 47, "end_idx": 48, "text": "機会"},
+    {"type": "replace", "start_idx": 54, "end_idx": 56, "text": "考え方"},
+    {"type": "replace", "start_idx": 70, "end_idx": 71, "text": "極端"},
+    {"type": "replace", "start_idx": 83, "end_idx": 84, "text": "言う"},
+    {"type": "replace", "start_idx": 89, "end_idx": 90, "text": "神谷宗幣"},
+    {"type": "replace", "start_idx": 107, "end_idx": 108, "text": "神谷宗幣"},
+    {"type": "replace", "start_idx": 118, "end_idx": 119, "text": "一切"},
+    {"type": "delete", "start_idx": 126, "end_idx": 128},
+    {"type": "replace", "start_idx": 131, "end_idx": 133, "text": "参政党"},
+    {"type": "delete", "start_idx": 136, "end_idx": 470},
+    {"type": "replace", "start_idx": 471, "end_idx": 475, "text": "失礼しちゃった"},
+    {"type": "replace", "start_idx": 484, "end_idx": 485, "text": "通り"},
+    {"type": "replace", "start_idx": 486, "end_idx": 487, "text": "と思いました"},
+    {"type": "replace", "start_idx": 489, "end_idx": 490, "text": "ぜひ"},
+    {"type": "replace", "start_idx": 494, "end_idx": 499, "text": "高評価ボタン"},
+    {"type": "replace", "start_idx": 501, "end_idx": 503, "text": "ご支援"},
+    {"type": "replace", "start_idx": 506, "end_idx": 510, "text": "お願いいたします。"}
+  ]
+}
+
+===== pass2 =====
+{
+"lines": [
+{
+"from": 0,
+"to": 4,
+"text": "ちょっといろんな、まあ、ここでは"
+},
+{
+"from": 5,
+"to": 9,
+"text": "ちょっといろいろ言えないのが"
+},
+{
+"from": 10,
+"to": 14,
+"text": "残念なんですけれども、まあ"
+},
+{
+"from": 15,
+"to": 21,
+"text": "ちょっと、なんていうんだろうかな"
+},
+{
+"from": 22,
+"to": 28,
+"text": "参政党の党運営みたいなところ"
+},
+{
+"from": 29,
+"to": 36,
+"text": "を、ちょっと、垣間見る機会がありましたので"
+},
+{
+"from": 37,
+"to": 49,
+"text": "まあ、考え方としてはわからなくもないんだけれども"
+},
+{
+"from": 50,
+"to": 56,
+"text": "ちょっと、ちょっと極端じゃないのかなっていう"
+},
+{
+"from": 57,
+"to": 59,
+"text": "気はします"
+},
+{
+"from": 60,
+"to": 65,
+"text": "だから、まあ、逆に言うと"
+},
+{
+"from": 66,
+"to": 73,
+"text": "それだけ、その神谷宗幣さんの自由な"
+},
+{
+"from": 74,
+"to": 83,
+"text": "こう、自由度が高すぎるというか"
+},
+{
+"from": 84,
+"to": 87,
+"text": "なんで神谷宗幣さん"
+},
+{
+"from": 88,
+"to": 95,
+"text": "だけそれできて、他の人は"
+},
+{
+"from": 96,
+"to": 102,
+"text": "一切できないのっていうのが"
+},
+{
+"from": 103,
+"to": 113,
+"text": "これはでも参政党のね、失礼しちゃった方がいいかなということで"
+},
+{
+"from": 114,
+"to": 118,
+"text": "皆さん、なるほど、その通りと思いました"
+},
+{
+"from": 119,
+"to": 124,
+"text": "ら、ぜひチャンネル登録と高評価ボタン"
+},
+{
+"from": 125,
+"to": 129,
+"text": "でご支援をよろしくお願いいたします"
+},
+{
+"from": 130,
+"to": 130,
+"text": "ありがとうございました"
+}
+]
+}
+
+===== pass3 =====
+{"lines":[{"from":0,"to":4,"text":"ちょっといろんな、まあ、ここでは"},{"from":5,"to":9,"text":"ちょっといろいろ言えないのが"},{"from":10,"to":14,"text":"残念なんですけれども、まあ"},{"from":15,"to":21,"text":"ちょっと、なんていうんだろうかな、"},{"from":22,"to":28,"text":"参政党の党運営みたいなところ"},{"from":29,"to":32,"text":"を、ちょっと、垣間見る機会"},{"from":33,"to":36,"text":"がありましたので、"},{"from":37,"to":41,"text":"まあ、考え方としては"},{"from":42,"to":49,"text":"わからなくもないんだけれども、"},{"from":50,"to":51,"text":"ちょっと、ちょっと"},{"from":52,"to":56,"text":"極端じゃないのかなっていう"},{"from":57,"to":59,"text":"気はします。"},{"from":60,"to":65,"text":"だから、まあ、逆に言うと、"},{"from":66,"to":67,"text":"それだけ、"},{"from":68,"to":73,"text":"その神谷宗幣さんの自由な、"},{"from":74,"to":83,"text":"こう、自由度が高すぎるというか、"},{"from":84,"to":87,"text":"なんで神谷宗幣さん"},{"from":88,"to":95,"text":"だけそれできて、他の人は"},{"from":96,"to":102,"text":"一切できないのっていうのが、"},{"from":103,"to":107,"text":"これはでも参政党のね、"},{"from":108,"to":111,"text":"失礼しちゃった方がいい"},{"from":112,"to":113,"text":"かなということで、"},{"from":114,"to":115,"text":"皆さん、なるほど、"},{"from":116,"to":119,"text":"その通りと思いましたら、"},{"from":120,"to":124,"text":"ぜひチャンネル登録と高評価ボタン"},{"from":125,"to":127,"text":"でご支援を"},{"from":128,"to":129,"text":"よろしくお願いいたします。"},{"from":130,"to":130,"text":"ありがとうございました。"}]}

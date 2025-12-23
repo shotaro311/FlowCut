@@ -42,6 +42,9 @@ class WorkflowPanel(ttk.Frame):
         self.rolling_dots = 0
         self.rolling_timer_id = None
         
+        # Whisperランナー変数
+        self.whisper_runner_var = tk.StringVar(value="openai")
+
         # LLM関連変数
         self.workflow_var = tk.StringVar(value="workflow1")
         self.pass1_model_var = tk.StringVar()
@@ -108,10 +111,38 @@ class WorkflowPanel(ttk.Frame):
         select_output_button = ttk.Button(output_frame, text="保存先を変更", command=self.select_output_dir)
         select_output_button.pack(side=tk.RIGHT)
         
+        # 音声認識エンジン選択
+        whisper_frame = ttk.LabelFrame(self, text="音声認識")
+        whisper_frame.pack(fill=tk.X, pady=(0, 8))
+
+        whisper_row = ttk.Frame(whisper_frame)
+        whisper_row.pack(fill=tk.X, pady=(4, 4))
+        ttk.Label(whisper_row, text="エンジン:").pack(side=tk.LEFT)
+        whisper_options = [
+            ("openai", "OpenAI Whisper（推奨）"),
+            ("mlx", "MLX Whisper（高速）"),
+        ]
+        self._whisper_runner_labels = {k: v for k, v in whisper_options}
+        whisper_combo = ttk.Combobox(
+            whisper_row,
+            textvariable=self.whisper_runner_var,
+            values=[k for k, _ in whisper_options],
+            state="readonly",
+            width=10,
+        )
+        whisper_combo.pack(side=tk.LEFT, padx=(4, 0))
+        whisper_combo.bind("<<ComboboxSelected>>", self._on_whisper_runner_changed)
+        self._whisper_desc_label = ttk.Label(
+            whisper_row,
+            text="",
+            foreground="#888888",
+        )
+        self._whisper_desc_label.pack(side=tk.LEFT, padx=(8, 0))
+
         # LLMオプション
         options_frame = ttk.LabelFrame(self, text="LLMオプション")
         options_frame.pack(fill=tk.X, pady=(0, 8))
-        
+
         # ワークフロー選択
         workflow_row = ttk.Frame(options_frame)
         workflow_row.pack(fill=tk.X, pady=(4, 2))
@@ -126,9 +157,11 @@ class WorkflowPanel(ttk.Frame):
         )
         workflow_combo.pack(side=tk.LEFT, padx=(4, 0))
         workflow_combo.bind("<<ComboboxSelected>>", self._on_workflow_changed)
-        ttk.Label(workflow_row, text="workflow2: 校正/最適化  workflow3: 校正→行分割", foreground="#888888").pack(
-            side=tk.LEFT, padx=(8, 0)
-        )
+        ttk.Label(
+            workflow_row,
+            text="workflow1: 通常  workflow2: 通常（分割並列）  workflow3: 校正→行分割",
+            foreground="#888888",
+        ).pack(side=tk.LEFT, padx=(8, 0))
 
         # 1行の最大文字数（全ワークフロー共通）
         max_chars_row = ttk.Frame(options_frame)
@@ -291,6 +324,14 @@ class WorkflowPanel(ttk.Frame):
 
     def _load_initial_settings(self) -> None:
         """初期設定を読み込む。"""
+        # Whisperランナー設定を読み込む
+        saved_runner = self.config.get_whisper_runner()
+        if saved_runner in self._whisper_runner_labels:
+            self.whisper_runner_var.set(saved_runner)
+        else:
+            self.whisper_runner_var.set("openai")
+        self._update_whisper_desc_label()
+
         self.workflow_var.set(self.config.get_workflow())
 
         all_models = set(self._get_all_models())
@@ -526,6 +567,7 @@ class WorkflowPanel(ttk.Frame):
             workflow_id=self.workflow_id,
             audio_path=self.selected_file,
             subtitle_dir=self.output_dir,
+            whisper_runner=self.whisper_runner_var.get(),
             llm_provider=provider,
             llm_profile=None,
             workflow=self.workflow_var.get() or "workflow1",
@@ -731,6 +773,17 @@ class WorkflowPanel(ttk.Frame):
         current_phase = self.phase_var.get()
         if current_phase:
             self.phase_var.set(current_phase.rstrip('.').rstrip())
+
+    def _on_whisper_runner_changed(self, _event: object) -> None:
+        runner = self.whisper_runner_var.get()
+        self.config.set_whisper_runner(runner)
+        self._update_whisper_desc_label()
+
+    def _update_whisper_desc_label(self) -> None:
+        """Whisperランナーの説明ラベルを更新する。"""
+        runner = self.whisper_runner_var.get()
+        desc = self._whisper_runner_labels.get(runner, "")
+        self._whisper_desc_label.configure(text=desc)
 
     def _on_workflow_changed(self, _event: object) -> None:
         self.config.set_workflow(self.workflow_var.get())

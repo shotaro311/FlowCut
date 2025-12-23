@@ -73,17 +73,26 @@ def run_whisper_local(
     try:
         # モデルをロード
         model = whisper.load_model(model_name)
-        
+
         # 文字起こし実行（ワードレベルタイムスタンプ有効）
+        # 認識精度向上のためのパラメータ最適化:
+        # - hallucination_silence_threshold: 無音区間でのhallucination（同じフレーズの繰り返し）を防止
+        # - logprob_threshold: 低確率トークンを除外して誤認識を減らす
+        # - compression_ratio_threshold: 繰り返し検出を厳格化（推奨値2.4）
+        # - beam_size/best_of: デコーディング品質向上
         output = model.transcribe(
             str(audio_path),
             word_timestamps=True,
             language=language,
             verbose=False,
-            temperature=0.0,
-            condition_on_previous_text=True,  # 文脈を考慮（MLXはFalseだが精度向上のため有効化）
-            no_speech_threshold=0.5,  # 無音判定を緩くして欠落を防ぐ
-            compression_ratio_threshold=2.8,  # 圧縮判定を緩くして繰り返し検出を抑制
+            temperature=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0),  # フォールバック温度
+            condition_on_previous_text=True,  # 文脈を考慮
+            no_speech_threshold=0.6,  # 無音判定（推奨値）
+            compression_ratio_threshold=2.4,  # 繰り返し検出を厳格化（推奨値）
+            logprob_threshold=-1.0,  # 低確率トークンを除外
+            hallucination_silence_threshold=2.0,  # 無音区間でのhallucination防止
+            beam_size=5,  # ビームサーチサイズ
+            best_of=5,  # 複数候補から最良を選択
         )
     except Exception as exc:
         raise TranscriptionError(f"whisper 実行に失敗しました: {exc}") from exc

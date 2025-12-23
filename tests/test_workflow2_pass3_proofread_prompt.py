@@ -1,6 +1,6 @@
 import json
 
-from src.llm.two_pass_optimized import TwoPassFormatter
+from src.llm.two_pass import TwoPassFormatter
 from src.transcribe.base import WordTimestamp
 
 
@@ -14,7 +14,7 @@ def _words_for_demo():
     ]
 
 
-def test_workflow2_pass3_prompt_contains_glossary(monkeypatch):
+def test_workflow2_pass3_prompt_matches_workflow1(monkeypatch):
     calls: list[tuple[str | None, str]] = []
 
     def fake_call_llm(self, payload: str, model_override=None, pass_label=None):
@@ -47,8 +47,6 @@ def test_workflow2_pass3_prompt_contains_glossary(monkeypatch):
     assert [label for label, _ in calls] == ["pass1", "pass2", "pass3"]
 
     pass3_prompt = next(payload for label, payload in calls if label == "pass3")
-    assert "Glossary" in pass3_prompt
-    assert "菅義偉" in pass3_prompt
-    assert "公明党" in pass3_prompt
-    assert "from/to（範囲）は一切変更しない" in pass3_prompt
-
+    assert "Glossary" not in pass3_prompt
+    assert "単語リスト（index:word）:" in pass3_prompt
+    assert "from/to（範囲）は一切変更しない" not in pass3_prompt

@@ -1,0 +1,59 @@
+{
+  "run_id": "videoplayback.mp4 のコピー_mlx_20251221T195722",
+  "audio_file": "videoplayback.mp4 のコピー.mp4",
+  "runner": "mlx",
+  "requested_at": "20251221T195722",
+  "total_elapsed_time": "8m 46.13s",
+  "audio_duration_time": "17m 7.68s",
+  "stage_timings_time": {
+    "transcribe_sec": "1m 46.22s",
+    "llm_two_pass_sec": "6m 59.82s"
+  },
+  "llm_tokens": {
+    "pass1": {
+      "provider": "google",
+      "model": "gemini-3-flash-preview",
+      "prompt_tokens": 30890,
+      "completion_tokens": 2312,
+      "total_tokens": 76973,
+      "duration_time": "4m 5.37s",
+      "cost_input_usd": 0.015445,
+      "cost_output_usd": 0.0069359999999999995,
+      "cost_total_usd": 0.022380999999999998
+    },
+    "pass2": {
+      "provider": "google",
+      "model": "gemini-2.5-pro",
+      "prompt_tokens": 29840,
+      "completion_tokens": 15614,
+      "total_tokens": 89941,
+      "duration_time": "6m 29.54s",
+      "cost_input_usd": 0.0373,
+      "cost_output_usd": 0.15614,
+      "cost_total_usd": 0.19344
+    },
+    "pass3": {
+      "provider": "google",
+      "model": "gemini-3-flash-preview",
+      "prompt_tokens": 132346,
+      "completion_tokens": 14356,
+      "total_tokens": 197994,
+      "duration_time": "5m 37.49s",
+      "cost_input_usd": 0.066173,
+      "cost_output_usd": 0.043068,
+      "cost_total_usd": 0.109241
+    },
+    "pass4": {
+      "provider": "google",
+      "model": "gemini-2.5-pro",
+      "prompt_tokens": 9411,
+      "completion_tokens": 834,
+      "total_tokens": 33213,
+      "duration_time": "3m 6.87s",
+      "cost_input_usd": 0.01176375,
+      "cost_output_usd": 0.00834,
+      "cost_total_usd": 0.02010375
+    }
+  },
+  "run_total_cost_usd": 0.34516574999999994
+}

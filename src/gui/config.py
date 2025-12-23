@@ -302,6 +302,20 @@ class GuiConfig:
         self._config["keep_extracted_audio"] = keep
         self.save_config()
 
+    # --- Whisperランナー設定 ---
+
+    def get_whisper_runner(self) -> str:
+        """Whisperランナーの設定を取得する。デフォルトは 'openai'。"""
+        runner = self._config.get("whisper_runner")
+        if isinstance(runner, str) and runner.strip():
+            return runner.strip().lower()
+        return "openai"  # デフォルトはopenai-whisper (local)
+
+    def set_whisper_runner(self, runner: str) -> None:
+        """Whisperランナーの設定を保存する。"""
+        self._config["whisper_runner"] = runner.strip().lower()
+        self.save_config()
+
     # --- ログ保存設定 ---
 
     def get_save_logs(self) -> bool:

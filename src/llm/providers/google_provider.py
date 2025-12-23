@@ -41,6 +41,12 @@ class GoogleGeminiProvider(BaseLLMProvider):
                 "temperature": 1 if request.temperature is None else request.temperature,
             },
         }
+        if request.metadata:
+            schema = request.metadata.get("structured_output_schema")
+            mime_type = request.metadata.get("structured_output_mime_type")
+            if schema and mime_type:
+                payload["generationConfig"]["response_mime_type"] = mime_type
+                payload["generationConfig"]["response_json_schema"] = schema
         timeout = request.timeout if request.timeout is not None else settings.request_timeout
         
         data = post_json_request(

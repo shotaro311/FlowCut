@@ -106,13 +106,56 @@ def build_pass2_prompt(words: Sequence, max_chars: float) -> str:
 
 
 def build_pass3_prompt(lines, words, issues, glossary_terms) -> str:
-    indexed = build_indexed_words(words)
+    def _format_sec(value: object) -> str:
+        try:
+            return f"{float(value):.2f}"
+        except (TypeError, ValueError):
+            return "?"
+
+    indexed = "\n".join(
+        f"{i}: {w.word} ({_format_sec(getattr(w, 'start', None))}-{_format_sec(getattr(w, 'end', None))})"
+        for i, w in enumerate(words)
+    )
     if issues:
         issue_text = "\n".join([f"- {issue.description} → {issue.suggested_action}" for issue in issues])
     else:
         issue_text = "問題は検出されませんでした。全行を確認し、以下のルールに従って最小限の修正を行ってください。"
+    has_missing_coverage = any(issue.type == "missing_coverage" for issue in issues)
+    missing_rule = ""
+    if has_missing_coverage:
+        missing_rule = "10. **欠落したインデックス範囲を必ず補完**: 欠けている範囲の単語を追加し、0から末尾まで連続にする\n"
+    max_line_duration_sec = 10.0
+    line_timings = []
+    for l in lines:
+        start = None
+        end = None
+        if 0 <= l.start_idx < len(words):
+            start = getattr(words[l.start_idx], "start", None)
+        if 0 <= l.end_idx < len(words):
+            end = getattr(words[l.end_idx], "end", None)
+        duration = None
+        if start is not None and end is not None:
+            try:
+                duration = float(end) - float(start)
+            except (TypeError, ValueError):
+                duration = None
+        line_timings.append(
+            {
+                "from": l.start_idx,
+                "to": l.end_idx,
+                "text": l.text,
+                "start": _format_sec(start),
+                "end": _format_sec(end),
+                "duration": _format_sec(duration),
+            }
+        )
     current_lines = json.dumps(
         [{"from": l.start_idx, "to": l.end_idx, "text": l.text} for l in lines],
+        ensure_ascii=False,
+        indent=2,
+    )
+    current_lines_with_time = json.dumps(
+        line_timings,
         ensure_ascii=False,
         indent=2,
     )
@@ -131,10 +174,13 @@ def build_pass3_prompt(lines, words, issues, glossary_terms) -> str:
         "6. **語の途中で切れている箇所は必ず連結**（分断された語を統合）\n"
         "7. **改行の優先度**: (1)「。?!」直後 → (2)「、」直後 → (3) 接続助詞・係助詞など句が自然に切れる後ろ。名詞句/動詞句の途中は切らない。迷う場合は改行しない\n"
         "8. **元の語順と文脈を保つ**。句読点がない場合も上記7に沿って自然に整形する\n\n"
+        f"9. **時間幅の上限**: 1行の時間幅（end-start）が{max_line_duration_sec:.1f}秒を超える場合は必ず分割する\n\n"
+        f"{missing_rule}"
         "- 必ず1件以上の行を `lines` 配列で返してください（空配列やnullは禁止）\n\n"
         "# Input\n"
         f"単語リスト（index:word）:\n{indexed}\n\n"
         f"現在の行分割:\n{current_lines}\n\n"
+        f"現在の行分割（時間情報）:\n{current_lines_with_time}\n\n"
         "# Output\n"
         "以下のJSONのみを返してください。説明文・コードフェンス・前後のテキストを含めることは禁止です。\n"
         "{\n"
