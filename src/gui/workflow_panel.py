@@ -54,7 +54,7 @@ class WorkflowPanel(ttk.Frame):
         self.start_delay_var = tk.StringVar(value="0.2")
         self.line_max_chars_var = tk.StringVar(value="17")
         self.advanced_visible = tk.BooleanVar(value=False)
-        self.save_logs_var = tk.BooleanVar(value=False)
+        self.save_logs_var = tk.BooleanVar(value=True)
         self.keep_extracted_audio_var = tk.BooleanVar(value=False)
         self.notify_on_complete_var = tk.BooleanVar(value=False)
         self.pass5_enabled_var = tk.BooleanVar(value=False)
@@ -281,7 +281,7 @@ class WorkflowPanel(ttk.Frame):
         output_row = ttk.Frame(self)
         output_row.pack(fill=tk.X, pady=(0, 2))
         self.output_label = ttk.Label(output_row, textvariable=self.output_var, anchor=tk.W)
-        self.output_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.output_label.pack(side=tk.LEFT, padx=(0, 8))
         self.open_output_button = ttk.Button(
             output_row,
             text="開く",
@@ -289,7 +289,7 @@ class WorkflowPanel(ttk.Frame):
             state=tk.DISABLED,
             width=6,
         )
-        self.open_output_button.pack(side=tk.RIGHT, padx=(8, 0))
+        self.open_output_button.pack(side=tk.RIGHT)
 
         self.metrics_label = ttk.Label(self, textvariable=self.metrics_var)
         self.metrics_label.pack(fill=tk.X)
@@ -603,6 +603,10 @@ class WorkflowPanel(ttk.Frame):
             srt_path = next((p for p in output_paths if p.suffix.lower() == ".srt"), None)
             last_path = srt_path or output_paths[-1]
             display = f"{last_path.parent.name}/{last_path.name}" if last_path.parent.name else last_path.name
+            # 長いパス名を短縮（最大50文字）
+            if len(display) > 50:
+                # 中央を省略して表示
+                display = display[:24] + "..." + display[-23:]
             self.output_var.set(f"出力: {display}")
             self._last_output_dir = last_path.parent
             if self._last_output_dir.exists():

@@ -320,7 +320,7 @@ class GuiConfig:
 
     def get_save_logs(self) -> bool:
         """ログを保存するかどうかを取得する。"""
-        return bool(self._config.get("save_logs", False))
+        return bool(self._config.get("save_logs", True))
 
     def set_save_logs(self, save: bool) -> None:
         """ログを保存するかどうかを保存する。"""
