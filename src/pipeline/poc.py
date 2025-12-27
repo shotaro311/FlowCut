@@ -128,6 +128,7 @@ def execute_poc_run(
     progress_dir = options.progress_dir
     metrics_output_dir: Path | None = None
     raw_llm_log_dir: Path | None = None
+    hybrid_log_dir: Path | None = None
     enforce_file_limits = True
     run_output_dir: Path | None = None
 
@@ -140,6 +141,7 @@ def execute_poc_run(
         progress_dir = logs_root / "progress"
         metrics_output_dir = logs_root / "metrics"
         raw_llm_log_dir = logs_root / "llm_raw"
+        hybrid_log_dir = logs_root / "hybrid_logs"
         enforce_file_limits = False
 
     for slug in models:
@@ -184,9 +186,24 @@ def execute_poc_run(
                 audio_path.name,
                 t_transcribe_end - t_transcribe_start,
             )
-            blocks = build_single_block(result)
+
             # run_idは元のファイル名（動画の場合は動画名）をベースにする
             run_id = f"{original_stem}_{slug}_{timestamp}"
+
+            # Phase 1.5: ハイブリッド処理（workflow3の場合）
+            t_hybrid_start = time.perf_counter()
+            t_hybrid_end = t_hybrid_start  # デフォルト（ハイブリッド処理なし）
+            result = _apply_hybrid_processing_if_enabled(
+                result=result,
+                audio_path=audio_path,
+                workflow=options.workflow,
+                progress_callback=options.progress_callback,
+                log_dir=hybrid_log_dir,
+                run_id=run_id,
+            )
+            t_hybrid_end = time.perf_counter()
+
+            blocks = build_single_block(result)
             output_path = json_output_dir / f"{run_id}.json"
             save_result(
                 result,
@@ -381,6 +398,94 @@ def execute_poc_run(
 
 
 # --- helper functions shared by script/CLI ---
+
+
+def _apply_hybrid_processing_if_enabled(
+    result: TranscriptionResult,
+    audio_path: Path,
+    workflow: str,
+    progress_callback: Callable[[str, int], None] | None = None,
+    log_dir: Path | None = None,
+    run_id: str | None = None,
+) -> TranscriptionResult:
+    """
+    ワークフローがhybrid_enabledの場合、Gemini音声認識で補正を行う。
+
+    Args:
+        result: Whisperの文字起こし結果
+        audio_path: 音声ファイルパス
+        workflow: ワークフロー名
+        progress_callback: 進捗コールバック
+        log_dir: ログ出力ディレクトリ（Gemini結果と統合結果をJSONで保存）
+        run_id: 実行ID（ログファイル名に使用）
+
+    Returns:
+        補正されたTranscriptionResult（ハイブリッド処理が無効の場合はそのまま返す）
+    """
+    from src.llm.workflows.registry import get_workflow
+
+    wf = get_workflow(workflow)
+    if not wf.hybrid_enabled:
+        return result
+
+    if not result.words:
+        logger.warning("Whisper words is empty, skipping hybrid processing")
+        return result
+
+    logger.info("Hybrid processing enabled for workflow: %s", wf.slug)
+
+    # GOOGLE_API_KEYが設定されているか確認
+    import os
+    if not os.getenv("GOOGLE_API_KEY"):
+        logger.warning("GOOGLE_API_KEY is not set, skipping hybrid processing")
+        if progress_callback:
+            progress_callback("GOOGLE_API_KEY未設定（Whisperのみ）", 0)
+        return result
+
+    try:
+        from src.transcribe.hybrid import HybridProcessor, ThinkingLevel
+
+        # thinking_levelを文字列からEnumに変換
+        thinking_level_map = {
+            "minimal": ThinkingLevel.MINIMAL,
+            "low": ThinkingLevel.LOW,
+            "medium": ThinkingLevel.MEDIUM,
+            "high": ThinkingLevel.HIGH,
+        }
+        thinking_level = thinking_level_map.get(
+            wf.hybrid_thinking_level, ThinkingLevel.MEDIUM
+        )
+
+        processor = HybridProcessor(
+            thinking_level=thinking_level,
+            similarity_threshold=wf.hybrid_similarity_threshold,
+        )
+
+        # log_dirが指定されていない場合、デフォルトでtemp/hybrid_logsを使用
+        hybrid_log_dir = log_dir or Path("temp/hybrid_logs")
+
+        hybrid_result = processor.process(
+            audio_path=audio_path,
+            whisper_result=result,
+            progress_callback=progress_callback,
+            log_dir=hybrid_log_dir,
+            run_id=run_id,
+        )
+
+        logger.info(
+            "Hybrid processing done: original_words=%d, merged_words=%d",
+            len(result.words or []),
+            len(hybrid_result.words or []),
+        )
+        return hybrid_result
+
+    except Exception as exc:
+        logger.error("Hybrid processing failed: %s", exc, exc_info=True)
+        logger.warning("Falling back to Whisper-only result")
+        if progress_callback:
+            progress_callback(f"Gemini処理エラー: {str(exc)[:50]}", 0)
+        return result
+
 
 def build_single_block(result: TranscriptionResult) -> List[dict]:
     words = result.words or []
