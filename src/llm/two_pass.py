@@ -684,7 +684,7 @@ class TwoPassFormatter:
                     require_full_coverage=False,
                 )
                 if normalized is None:
-                    if self.workflow == "workflow2":
+                    if self.workflow in ("workflow2", "workflow3"):
                         logger.warning("pass2: invalid line coverage; proceeding to pass3")
                     else:
                         raise FormatterError("行分割結果の範囲（from/to）が不正です")
