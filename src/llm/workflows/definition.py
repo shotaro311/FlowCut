@@ -28,6 +28,10 @@ class WorkflowDefinition:
     pass3_enabled: bool = True
     pass1_fallback_enabled: bool = False
     two_call_enabled: bool = False
+    # ハイブリッド処理（Whisper + Gemini音声認識）
+    hybrid_enabled: bool = False
+    hybrid_thinking_level: str = "medium"  # minimal, low, medium, high
+    hybrid_similarity_threshold: float = 0.8
     pass1_prompt: Pass1PromptFn | None = None
     pass2_prompt: Pass2PromptFn | None = None
     pass3_prompt: Pass3PromptFn | None = None
