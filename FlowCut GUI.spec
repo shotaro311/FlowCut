@@ -1,12 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
-
+import certifi
 
 a = Analysis(
     ['flowcut_gui_launcher.py'],
     pathex=[],
     binaries=[],
-    datas=[],
-    hiddenimports=[],
+    datas=[
+        # SSL証明書をバンドル（macOSでHTTPSリクエストを行うため必須）
+        (certifi.where(), 'certifi'),
+    ],
+    hiddenimports=['certifi'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

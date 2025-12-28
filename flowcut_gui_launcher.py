@@ -12,10 +12,31 @@ import sys
 from pathlib import Path
 
 
+def _setup_ssl_certificates() -> None:
+    """PyInstallerバンドル時にSSL証明書のパスを設定する。"""
+    if not getattr(sys, "frozen", False):
+        return
+
+    meipass = getattr(sys, "_MEIPASS", None)
+    if not meipass:
+        return
+
+    # certifiのCA証明書ファイルを探す
+    cert_file = Path(meipass) / "certifi" / "cacert.pem"
+    if cert_file.exists():
+        cert_path = str(cert_file)
+        os.environ["SSL_CERT_FILE"] = cert_path
+        os.environ["REQUESTS_CA_BUNDLE"] = cert_path
+
+
 def main() -> None:
     """Launch the FlowCut GUI application."""
     # PyInstaller + multiprocessing で子プロセスが再度 GUI を起動しないようにする
     multiprocessing.freeze_support()
+
+    # SSL証明書を設定（PyInstallerバンドル時）
+    _setup_ssl_certificates()
+
     # Ensure project root is on sys.path so that `src` can be imported
     root = Path(__file__).resolve().parent
     if str(root) not in sys.path:

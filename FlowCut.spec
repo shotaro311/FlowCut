@@ -1,8 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 import glob
+import certifi
 
-datas = [('config', 'config')]
+datas = [
+    ('config', 'config'),
+    # SSL証明書をバンドル（macOSでHTTPSリクエストを行うため必須）
+    (certifi.where(), 'certifi'),
+]
 
 # ffmpegバイナリを 'ffmpeg_bin' サブディレクトリに配置
 # これにより、PyAVのffmpegライブラリとの競合を避ける
@@ -13,7 +18,7 @@ ffmpeg_libs = glob.glob('/opt/homebrew/Cellar/ffmpeg/*/lib/*.dylib')
 for lib in ffmpeg_libs:
     binaries.append((lib, 'ffmpeg_bin'))
 
-hiddenimports = ['mlx_whisper', 'mlx', 'whisper']
+hiddenimports = ['mlx_whisper', 'mlx', 'whisper', 'certifi']
 
 # mlx_whisper
 tmp_ret = collect_all('mlx_whisper')
