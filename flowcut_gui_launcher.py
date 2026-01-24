@@ -28,15 +28,21 @@ def main() -> None:
         if meipass:
             meipass_path = Path(meipass)
             # ffmpeg_bin サブディレクトリを優先的にPATHに追加
-            ffmpeg_bin = meipass_path / "ffmpeg_bin"
-            if ffmpeg_bin.exists():
-                os.environ["PATH"] = str(ffmpeg_bin) + os.pathsep + os.environ.get("PATH", "")
+            for ffmpeg_bin in (
+                meipass_path / "ffmpeg_bin",
+                meipass_path / "_internal" / "ffmpeg_bin",
+            ):
+                if ffmpeg_bin.exists():
+                    os.environ["PATH"] = str(ffmpeg_bin) + os.pathsep + os.environ.get("PATH", "")
             os.environ["PATH"] = str(meipass_path) + os.pathsep + os.environ.get("PATH", "")
         # 念のため MacOS ディレクトリと ffmpeg_bin も追加
         bundle_dir = Path(sys.executable).resolve().parent
-        ffmpeg_bin_bundle = bundle_dir / "ffmpeg_bin"
-        if ffmpeg_bin_bundle.exists():
-            os.environ["PATH"] = str(ffmpeg_bin_bundle) + os.pathsep + os.environ.get("PATH", "")
+        for ffmpeg_bin_bundle in (
+            bundle_dir / "ffmpeg_bin",
+            bundle_dir / "_internal" / "ffmpeg_bin",
+        ):
+            if ffmpeg_bin_bundle.exists():
+                os.environ["PATH"] = str(ffmpeg_bin_bundle) + os.pathsep + os.environ.get("PATH", "")
         os.environ["PATH"] = str(bundle_dir) + os.pathsep + os.environ.get("PATH", "")
 
     # Make relative paths (config/, logs/, output/ etc.) resolve from project root

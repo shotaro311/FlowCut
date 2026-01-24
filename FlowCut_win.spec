@@ -16,6 +16,34 @@ datas = [('config', 'config')]
 binaries = []
 hiddenimports = ['whisper']
 
+ROOT_DIR = os.path.abspath(globals().get("specpath") or os.getcwd())
+
+
+def _find_ffmpeg_exe() -> str | None:
+    for key in ("FLOWCUT_FFMPEG_EXE", "FFMPEG_EXE"):
+        raw_path = os.environ.get(key)
+        if not raw_path:
+            continue
+        candidate = os.path.expandvars(raw_path)
+        if not os.path.isabs(candidate):
+            candidate = os.path.join(ROOT_DIR, candidate)
+        if os.path.exists(candidate):
+            return candidate
+    bundled = os.path.join(ROOT_DIR, "assets", "ffmpeg", "ffmpeg.exe")
+    if os.path.exists(bundled):
+        return bundled
+    return None
+
+
+ffmpeg_exe = _find_ffmpeg_exe()
+if ffmpeg_exe:
+    binaries.append((ffmpeg_exe, "ffmpeg_bin"))
+
+# Optional: include license texts for redistributed ffmpeg binary.
+ffmpeg_licenses_dir = os.path.join(ROOT_DIR, "assets", "ffmpeg", "licenses")
+if os.path.isdir(ffmpeg_licenses_dir):
+    datas.append((ffmpeg_licenses_dir, os.path.join("licenses", "ffmpeg")))
+
 tmp_ret = collect_all('whisper')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 

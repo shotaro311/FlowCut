@@ -19,6 +19,10 @@ logs/llm_raw/
 temp/progress/
 temp/poc_samples/
 
+# Bundled third-party binaries (keep local; fetch via scripts when needed)
+assets/ffmpeg/ffmpeg.exe
+assets/ffmpeg/licenses/
+
 
 
 # Virtual environments
