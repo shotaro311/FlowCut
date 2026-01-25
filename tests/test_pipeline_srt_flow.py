@@ -51,6 +51,6 @@ def test_execute_poc_run_generates_srt_with_dummy_provider(tmp_path):
 
     srt_files = list((tmp_path / "subs").glob("*.srt"))
     assert len(srt_files) == 1
-    content = srt_files[0].read_text()
+    content = srt_files[0].read_text(encoding="utf-8")
     assert "こんにちは" in content
     assert "世界" in content

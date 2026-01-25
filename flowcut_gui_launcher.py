@@ -14,6 +14,12 @@ from pathlib import Path
 
 def main() -> None:
     """Launch the FlowCut GUI application."""
+    # Windows: ctranslate2 / torch などが同梱される環境では OpenMP DLL が重複し、
+    # 初回の文字起こし開始時にプロセスが異常終了するケースがある。
+    # 早期に環境変数で回避する（GUI起動前・import前が重要）。
+    if os.name == "nt":
+        os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
     # PyInstaller + multiprocessing で子プロセスが再度 GUI を起動しないようにする
     multiprocessing.freeze_support()
     # Ensure project root is on sys.path so that `src` can be imported

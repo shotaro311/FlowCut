@@ -14,7 +14,7 @@ import os
 # whisper パッケージ一式（コード + assets）をまとめて同梱する。
 datas = [('config', 'config')]
 binaries = []
-hiddenimports = ['whisper']
+hiddenimports = ['whisper', 'faster_whisper']
 
 ROOT_DIR = os.path.abspath(globals().get("specpath") or os.getcwd())
 
@@ -46,6 +46,8 @@ if os.path.isdir(ffmpeg_licenses_dir):
 
 tmp_ret = collect_all('whisper')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('faster_whisper')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 # さらに、実際の whisper パッケージの場所から mel_filters.npz を特定して、
 # 実行時に参照される `_internal\\whisper\\assets\\mel_filters.npz` へ明示的に配置する。
@@ -76,6 +78,24 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
+# Prefer system-installed VC++ runtime DLLs over bundled ones.
+# Some native stacks (torch / onnxruntime / ctranslate2) can become unstable when
+# older VC runtime DLLs are bundled into the app directory.
+_VC_RUNTIME_DLLS = {
+    "msvcp140.dll",
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+}
+try:
+    a.binaries = [
+        entry
+        for entry in a.binaries
+        if os.path.basename(entry[0]).lower() not in _VC_RUNTIME_DLLS
+    ]
+except Exception:
+    # If filtering fails for some reason, continue with the original binaries list.
+    pass
 pyz = PYZ(a.pure)
 
 exe = EXE(

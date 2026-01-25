@@ -24,6 +24,52 @@ logger = logging.getLogger(__name__)
 RAW_LOG_DIR = Path("logs/llm_raw")
 
 
+def _google_json_schema_for_pass(pass_label: str | None) -> Dict[str, Any] | None:
+    """Return a JSON Schema dict for Gemini structured output (when supported)."""
+    if not pass_label:
+        return None
+    if pass_label == "pass1":
+        return {
+            "type": "object",
+            "properties": {
+                "operations": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string", "enum": ["replace", "delete"]},
+                            "start_idx": {"type": "integer"},
+                            "end_idx": {"type": "integer"},
+                            "text": {"type": "string"},
+                        },
+                        "required": ["type", "start_idx", "end_idx"],
+                    },
+                }
+            },
+            "required": ["operations"],
+        }
+    if pass_label in {"pass2", "pass3", "pass4", "pass2to4"}:
+        return {
+            "type": "object",
+            "properties": {
+                "lines": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "from": {"type": "integer"},
+                            "to": {"type": "integer"},
+                            "text": {"type": "string"},
+                        },
+                        "required": ["from", "to", "text"],
+                    },
+                }
+            },
+            "required": ["lines"],
+        }
+    return None
+
+
 @dataclass(slots=True)
 class EditOperation:
     type: str  # "replace" | "delete"
@@ -51,18 +97,42 @@ class TwoPassResult:
 
 
 def _extract_json(text: str) -> Any:
-    """Extract JSON object/array from an LLM response, tolerating code fences."""
-    # Remove code fences if present
-    fenced = re.search(r"```(?:json)?\s*(\{.*\}|\[.*\])\s*```", text, re.DOTALL)
+    """Extract the first JSON object/array from an LLM response.
+
+    - Code fences (```json ... ```) are tolerated.
+    - Leading/trailing non-JSON text is tolerated.
+    """
+    if not isinstance(text, str):
+        raise TypeError("text must be str")
+
+    # Remove code fences if present (keep the inside as-is; we will decode the first JSON)
+    fenced = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.IGNORECASE)
     if fenced:
         text = fenced.group(1)
-    # Find first JSON-like substring
-    brace = text.find("{")
-    bracket = text.find("[")
-    start = min([p for p in [brace, bracket] if p != -1], default=-1)
-    if start > 0:
-        text = text[start:]
-    return json.loads(text)
+
+    stripped = text.strip()
+    if not stripped:
+        raise ValueError("LLM 応答が空です")
+
+    decoder = json.JSONDecoder()
+
+    # Prefer the first '{' or '[' if present, but allow for any later JSON fragment.
+    candidate_starts = [idx for idx, ch in enumerate(text) if ch in "{["]
+    if not candidate_starts:
+        preview = stripped.replace("\r", " ").replace("\n", " ")
+        raise ValueError(f"JSONが見つかりません（先頭）: {preview[:200]}")
+
+    last_error: Exception | None = None
+    for start in candidate_starts:
+        try:
+            fragment = text[start:].lstrip()
+            parsed, _ = decoder.raw_decode(fragment)
+            return parsed
+        except Exception as exc:
+            last_error = exc
+            continue
+
+    raise ValueError(f"JSONの抽出に失敗しました: {last_error}") from last_error
 
 
 def _log_raw_response(pass_label: str, raw: str) -> None:
@@ -416,6 +486,13 @@ class TwoPassFormatter:
                 metadata["anthropic_model"] = model_override
             else:
                 metadata["model"] = model_override
+        if self.provider_slug == "google":
+            # Gemini structured output: request JSON for two-pass prompts.
+            # If unsupported by the selected model, provider will fall back to plain text mode.
+            metadata["google_response_mime_type"] = "application/json"
+            schema = _google_json_schema_for_pass(pass_label)
+            if schema is not None:
+                metadata["google_response_json_schema"] = schema
         # run_id / source_name / pass_label をメタデータに載せておくと、
         # プロバイダー側でトークン使用量をパス別に集計できる。
         if self.run_id:

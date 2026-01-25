@@ -79,11 +79,11 @@ def resolve_models(raw: str | None) -> List[str]:
 
     - raw が None/空文字の場合は「プラットフォーム別のデフォルト」を選ぶ
       - macOS (darwin): MLX ランナー（'mlx'）
-      - それ以外（Windows / Linux 等）: OpenAI Whisper ランナー（'openai'）
+      - それ以外（Windows / Linux 等）: Faster-Whisper ランナー（'faster'）
     """
     if not raw:
         runners = available_runners()
-        default_slug = "mlx" if sys.platform == "darwin" else "openai"
+        default_slug = "mlx" if sys.platform == "darwin" else "faster"
         return [slug for slug in runners if slug == default_slug] or runners
     requested = [token.strip() for token in raw.split(",") if token.strip()]
     unknown = [slug for slug in requested if slug not in available_runners()]

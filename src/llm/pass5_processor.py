@@ -61,15 +61,32 @@ def entries_to_srt(entries: List[SrtEntry]) -> str:
 
 
 def _extract_json(text: str) -> Any:
-    fenced = re.search(r"```(?:json)?\s*(\{.*\}|\[.*\])\s*```", text, re.DOTALL)
+    if not isinstance(text, str):
+        raise TypeError("text must be str")
+    fenced = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.IGNORECASE)
     if fenced:
         text = fenced.group(1)
-    brace = text.find("{")
-    bracket = text.find("[")
-    start = min([p for p in [brace, bracket] if p != -1], default=-1)
-    if start > 0:
-        text = text[start:]
-    return json.loads(text)
+
+    stripped = text.strip()
+    if not stripped:
+        raise ValueError("LLM 応答が空です")
+
+    decoder = json.JSONDecoder()
+    starts = [idx for idx, ch in enumerate(text) if ch in "{["]
+    if not starts:
+        preview = stripped.replace("\r", " ").replace("\n", " ")
+        raise ValueError(f"JSONが見つかりません（先頭）: {preview[:200]}")
+
+    last_error: Exception | None = None
+    for start in starts:
+        try:
+            fragment = text[start:].lstrip()
+            parsed, _ = decoder.raw_decode(fragment)
+            return parsed
+        except Exception as exc:
+            last_error = exc
+            continue
+    raise ValueError(f"JSONの抽出に失敗しました: {last_error}") from last_error
 
 
 def _model_metadata_key(provider_slug: str) -> str:
@@ -128,6 +145,25 @@ class Pass5Processor:
             metadata["source_name"] = self.source_name
         if self.model_override:
             metadata[_model_metadata_key(self.provider_slug)] = self.model_override
+        if self.provider_slug == "google":
+            metadata["google_response_mime_type"] = "application/json"
+            metadata["google_response_json_schema"] = {
+                "type": "object",
+                "properties": {
+                    "lines": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "index": {"type": "integer"},
+                                "text": {"type": "string"},
+                            },
+                            "required": ["index", "text"],
+                        },
+                    }
+                },
+                "required": ["lines"],
+            }
         if self.provider_slug == "anthropic":
             metadata["anthropic_max_tokens"] = 4096
         request = FormatterRequest(

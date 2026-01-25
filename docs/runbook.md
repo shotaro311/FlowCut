@@ -205,7 +205,7 @@ python -m src.cli.main cleanup --days 3
 ### Windows 向け `.exe` パッケージ化の手順（概要）
 
 前提: Windows 10/11 64bit の開発環境で Python 3.10〜3.12 と `pyinstaller` が利用可能になっていること。
-（Whisper 用には `openai-whisper` を利用する想定）
+（文字起こしは Faster-Whisper をデフォルト想定）
 
 1. ブランチと依存を整える
 

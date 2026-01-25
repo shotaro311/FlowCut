@@ -98,8 +98,8 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
   * 開発時は `pip install mlx-whisper` で依存を導入し、配布時の `.app` にはこのランタイムを同梱する想定。  
   * 友人側のMacでは、`.app` を展開して開くだけで MLX Whisper が利用できる（別途 `pip install` は不要）。
 * **Windows（友人に配布する `.exe` の想定環境）**
-  * 文字起こしの基盤は **OpenAI Whisper Large-v3 のローカル実行版**（`openai-whisper`）を前提とする。  
-  * 開発時は Windows 上で `pip install openai-whisper` などを行い、配布時の `.exe` には Python ランタイム・依存ライブラリを PyInstaller で同梱する方針。  
+  * 文字起こしの基盤は **Faster-Whisper（CTranslate2）** を前提とする（ローカル実行）。  
+  * 開発時は Windows 上で `pip install faster-whisper` などを行い、配布時の `.exe` には Python ランタイム・依存ライブラリを PyInstaller で同梱する方針。  
   * 友人側のWindowsでは、配布されたフォルダ（例: `FlowCut-win/`）内の `FlowCut.exe` をダブルクリックするだけで GUI が起動し、Python や ffmpeg の事前インストールは不要とする。  
   * 具体的なパッケージング手順・構成は `docs/plan/20251203_PLAN1.md`（Windows版 FlowCut GUI パッケージ化PLAN）に従う。
 

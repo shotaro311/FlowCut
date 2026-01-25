@@ -12,6 +12,7 @@ from src.config.settings import get_settings
 from src.llm.profiles import get_profile, list_models_by_provider, reload_profiles
 from src.llm.workflows.registry import get_workflow, list_workflows
 from src.gui.config import get_config
+from src.pipeline import list_models as list_transcribe_models
 
 
 class WorkflowPanel(ttk.Frame):
@@ -56,6 +57,9 @@ class WorkflowPanel(ttk.Frame):
         self.pass5_enabled_var = tk.BooleanVar(value=False)
         self.pass5_max_chars_var = tk.StringVar(value="17")
         self.pass5_model_var = tk.StringVar()
+        self.transcribe_runner_var = tk.StringVar()
+        self.transcribe_desc_var = tk.StringVar(value="")
+        self._transcribe_choices: list[dict] = []
         
         # モデル一覧
         self._models_by_provider = list_models_by_provider()
@@ -106,6 +110,24 @@ class WorkflowPanel(ttk.Frame):
         ttk.Label(output_frame, textvariable=self.output_dir_var, anchor=tk.W).pack(side=tk.LEFT, fill=tk.X, expand=True)
         select_output_button = ttk.Button(output_frame, text="保存先を変更", command=self.select_output_dir)
         select_output_button.pack(side=tk.RIGHT)
+
+        # 文字起こしエンジン（ランナー）選択
+        transcribe_frame = ttk.Frame(self)
+        transcribe_frame.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(transcribe_frame, text="文字起こし:").pack(side=tk.LEFT)
+        self._transcribe_choices = self._load_transcribe_choices()
+        transcribe_combo = ttk.Combobox(
+            transcribe_frame,
+            textvariable=self.transcribe_runner_var,
+            values=[c["slug"] for c in self._transcribe_choices],
+            state="readonly",
+            width=18,
+        )
+        transcribe_combo.pack(side=tk.LEFT, padx=(6, 0))
+        transcribe_combo.bind("<<ComboboxSelected>>", self._on_transcribe_runner_changed)
+        ttk.Label(transcribe_frame, textvariable=self.transcribe_desc_var, foreground="#888888").pack(
+            side=tk.LEFT, padx=(8, 0)
+        )
         
         # LLMオプション
         options_frame = ttk.LabelFrame(self, text="LLMオプション")
@@ -276,6 +298,15 @@ class WorkflowPanel(ttk.Frame):
     def _load_initial_settings(self) -> None:
         """初期設定を読み込む。"""
         self.workflow_var.set(self.config.get_workflow())
+
+        # 文字起こしランナー
+        available_slugs = {c["slug"] for c in self._transcribe_choices} if self._transcribe_choices else set()
+        runner = (self.config.get_transcribe_runner() or "").strip().lower()
+        if runner not in available_slugs:
+            runner = "mlx" if sys.platform == "darwin" and "mlx" in available_slugs else ("faster" if "faster" in available_slugs else (sorted(available_slugs)[0] if available_slugs else "openai"))
+        self.transcribe_runner_var.set(runner)
+        self._update_transcribe_desc(runner)
+        self.config.set_transcribe_runner(runner)
 
         all_models = set(self._get_all_models())
         saved_pass1 = self.config.get_pass_model("pass1", "").strip()
@@ -496,11 +527,13 @@ class WorkflowPanel(ttk.Frame):
                 return
 
         start_delay = self._get_start_delay()
+        transcribe_models = (self.transcribe_runner_var.get() or "").strip().lower() or None
         
         # コントローラーで並列実行
         self.controller.run_workflow(
             workflow_id=self.workflow_id,
             audio_path=self.selected_file,
+            transcribe_models=transcribe_models,
             subtitle_dir=self.output_dir,
             llm_provider=provider,
             llm_profile=None,
@@ -522,6 +555,42 @@ class WorkflowPanel(ttk.Frame):
             on_finish=self._on_finish,
             on_progress=self._on_progress,
         )
+
+    def _load_transcribe_choices(self) -> list[dict]:
+        try:
+            models = list_transcribe_models()
+        except Exception:
+            return []
+        out: list[dict] = []
+        for item in models:
+            slug = str(item.get("slug") or "").strip().lower()
+            if not slug:
+                continue
+            out.append({"slug": slug, "display_name": item.get("display_name"), "default_model": item.get("default_model")})
+        return out
+
+    def _on_transcribe_runner_changed(self, _event=None) -> None:
+        runner = (self.transcribe_runner_var.get() or "").strip().lower()
+        if runner:
+            self._update_transcribe_desc(runner)
+            self.config.set_transcribe_runner(runner)
+
+    def _update_transcribe_desc(self, runner: str) -> None:
+        label = ""
+        for item in self._transcribe_choices:
+            if item.get("slug") == runner:
+                display_name = str(item.get("display_name") or "").strip()
+                default_model = str(item.get("default_model") or "").strip()
+                parts = []
+                if display_name:
+                    parts.append(display_name)
+                if default_model:
+                    parts.append(f"model={default_model}")
+                label = " / ".join(parts)
+                break
+        if not label:
+            label = "（Windows推奨: faster）"
+        self.transcribe_desc_var.set(label)
 
     def _on_start(self) -> None:
         """開始時のコールバック。"""

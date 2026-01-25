@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from pathlib import Path
 from typing import Any, Dict
 
@@ -299,6 +300,24 @@ class GuiConfig:
     def set_notify_on_complete(self, notify: bool) -> None:
         """完了時に通知するかどうかを保存する。"""
         self._config["notify_on_complete"] = notify
+        self.save_config()
+
+    # --- 文字起こしランナー設定 ---
+
+    def get_transcribe_runner(self) -> str:
+        """文字起こしランナー（transcribe runner slug）を取得する。"""
+        raw = self._config.get("transcribe_runner")
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip().lower()
+        # 既定: macOS は mlx、その他は faster
+        return "mlx" if sys.platform == "darwin" else "faster"
+
+    def set_transcribe_runner(self, runner: str | None) -> None:
+        """文字起こしランナー（transcribe runner slug）を保存する。"""
+        if runner is None or not str(runner).strip():
+            self._config.pop("transcribe_runner", None)
+        else:
+            self._config["transcribe_runner"] = str(runner).strip().lower()
         self.save_config()
 
 
