@@ -379,6 +379,35 @@ def _has_same_line_ranges(before: Sequence["LineRange"], after: Sequence["LineRa
     return True
 
 
+def _repair_line_ranges_to_contiguous_prefix(
+    lines: Sequence["LineRange"],
+    n_words: int,
+) -> List["LineRange"]:
+    """Repair invalid Pass2 line ranges by re-assigning them sequentially.
+
+    Gemini などのモデルが `from/to` を 1 始まりにしたり、重複/欠落を含む範囲を返すと
+    そのままでは実行が止まってしまう。ここでは「行の順序と text は尊重しつつ」、
+    `to-from+1`（行が占める語数）を元に 0 始まりの連続範囲へ再割り当てする。
+    """
+    if not lines or n_words <= 0:
+        return []
+
+    repaired: List[LineRange] = []
+    cursor = 0
+
+    for line in lines:
+        if cursor >= n_words:
+            break
+        desired_len = (line.end_idx - line.start_idx + 1) if (line.end_idx is not None and line.start_idx is not None) else 0
+        if desired_len <= 0:
+            desired_len = 1
+        end = min(cursor + desired_len - 1, n_words - 1)
+        repaired.append(LineRange(start_idx=cursor, end_idx=end, text=line.text))
+        cursor = end + 1
+
+    return repaired
+
+
 class TwoPassFormatter:
     """Run two LLM passes and produce SRT without anchor alignment."""
 
@@ -644,12 +673,29 @@ class TwoPassFormatter:
             )
             t_p2_end = time.perf_counter()
             record_pass_time(self.run_id, "pass2", t_p2_end - t_p2_start)
-            lines = _parse_lines(parsed2)
-            if not lines:
+            pass2_lines_raw = _parse_lines(parsed2)
+            if not pass2_lines_raw:
                 raise FormatterError("行分割結果が空です")
-            lines = sorted(lines, key=lambda l: (l.start_idx, l.end_idx))
+            lines = sorted(pass2_lines_raw, key=lambda l: (l.start_idx, l.end_idx))
             if not _has_contiguous_prefix_coverage(lines, len(updated_words)):
-                raise FormatterError("行分割結果の範囲（from/to）が不正です")
+                # LLM が 1 始まりの index や重複/欠落を含む範囲を返すことがある。
+                # その場合でも処理を止めず、範囲を修復して続行する。
+                repaired = _repair_line_ranges_to_contiguous_prefix(pass2_lines_raw, len(updated_words))
+                repaired = sorted(repaired, key=lambda l: (l.start_idx, l.end_idx))
+                if _has_contiguous_prefix_coverage(repaired, len(updated_words)):
+                    logger.warning(
+                        "Pass 2 returned invalid ranges; repaired to contiguous prefix (words=%d, lines=%d)",
+                        len(updated_words),
+                        len(repaired),
+                    )
+                    lines = repaired
+                else:
+                    logger.warning(
+                        "Pass 2 returned invalid ranges and repair failed; falling back to local split (words=%d, lines=%d)",
+                        len(updated_words),
+                        len(pass2_lines_raw),
+                    )
+                    lines = self._fallback_split_all_words(updated_words, max_chars=max_chars)
             pass2_lines = lines
 
             # Pass3: Validation (now always executed)
@@ -930,6 +976,60 @@ class TwoPassFormatter:
 
         # 元の行とフォールバック行を start_idx でソートして返す
         return sorted(fallback_lines, key=lambda l: (l.start_idx, l.end_idx))
+
+    def _fallback_split_all_words(
+        self,
+        words: Sequence[WordTimestamp],
+        *,
+        max_chars: float,
+    ) -> List[LineRange]:
+        """Local fallback line splitting when Pass2 returns invalid ranges.
+
+        実行を止めずに最後まで SRT を生成することを優先し、単純なルールで行分割する。
+        """
+        if not words:
+            return []
+
+        n_words = len(words)
+        max_idx = n_words - 1
+        max_len = min(int(max_chars), 17)
+        min_len = 5
+        if max_len < min_len:
+            max_len = min_len
+
+        lines: List[LineRange] = []
+        idx = 0
+        while idx <= max_idx:
+            line_start = idx
+            text_parts: List[str] = []
+            current_len = 0
+
+            while idx <= max_idx:
+                word = words[idx].word or ""
+                next_len = current_len + len(word)
+                if text_parts and next_len > max_len and current_len >= min_len:
+                    break
+                text_parts.append(word)
+                current_len = next_len
+                idx += 1
+                if current_len >= max_len:
+                    break
+
+            line_end = idx - 1
+            if line_end < line_start:
+                # 万一進まなかった場合でも無限ループを避ける
+                line_end = line_start
+                idx = line_start + 1
+
+            lines.append(
+                LineRange(
+                    start_idx=line_start,
+                    end_idx=line_end,
+                    text="".join(text_parts),
+                )
+            )
+
+        return lines
 
     def _build_pass1_prompt(self, raw_text: str, words: Sequence[WordTimestamp]) -> str:
         if self.workflow_def.pass1_prompt is None:

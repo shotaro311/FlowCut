@@ -73,6 +73,57 @@ def test_trailing_words_are_covered_by_fallback(monkeypatch):
     assert any(tail_word in seg.text for seg in result.segments)
 
 
+def test_invalid_pass2_ranges_are_repaired(monkeypatch):
+    """
+    Pass2 が `from/to` の範囲を不正に返しても（1始まり/欠落/重複など）、
+    範囲修復＋フォールバックにより処理が停止しないことを確認する。
+    """
+
+    words = [
+        WordTimestamp(word="あいう", start=0.0, end=0.5),
+        WordTimestamp(word="えお", start=0.5, end=1.0),
+        WordTimestamp(word="かき", start=1.0, end=1.5),
+        WordTimestamp(word="くけこ", start=1.5, end=2.0),
+        WordTimestamp(word="さしす", start=2.0, end=2.5),
+        WordTimestamp(word="せそ", start=2.5, end=3.0),
+    ]
+
+    def fake_call_llm(self, payload: str, model_override=None, pass_label=None):
+        # Pass1: 変更なし
+        if pass_label == "pass1":
+            return json.dumps({"operations": []}, ensure_ascii=False)
+        # Pass2: 1始まり想定の `from/to` を返してしまうケース（先頭が 0 でない）
+        if pass_label == "pass2":
+            return json.dumps(
+                {
+                    "lines": [
+                        {"from": 1, "to": 2, "text": "あいうえお"},
+                        {"from": 3, "to": 4, "text": "かきくけこ"},
+                    ]
+                },
+                ensure_ascii=False,
+            )
+        # Pass3/4: 今回は影響させない（そのまま返す）
+        return json.dumps(
+            {
+                "lines": [
+                    {"from": 1, "to": 2, "text": "あいうえお"},
+                    {"from": 3, "to": 4, "text": "かきくけこ"},
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr("src.llm.validators.detect_issues", lambda lines, words: [])
+    monkeypatch.setattr(TwoPassFormatter, "_call_llm", fake_call_llm)
+
+    formatter = TwoPassFormatter(llm_provider="google")
+    result = formatter.run(text="".join(w.word for w in words), words=words)
+
+    assert result is not None
+    assert result.segments[-1].end >= words[-1].end
+
+
 def _words_with_internal_gap() -> List[WordTimestamp]:
     # 単語間に明確な時間ギャップがあるデータ
     return [
