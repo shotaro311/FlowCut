@@ -24,10 +24,18 @@ logger = logging.getLogger(__name__)
 RAW_LOG_DIR = Path("logs/llm_raw")
 
 
-def _google_json_schema_for_pass(pass_label: str | None) -> Dict[str, Any] | None:
+def _google_json_schema_for_pass(
+    pass_label: str | None,
+    *,
+    n_words: int | None = None,
+) -> Dict[str, Any] | None:
     """Return a JSON Schema dict for Gemini structured output (when supported)."""
     if not pass_label:
         return None
+    max_idx = (n_words - 1) if isinstance(n_words, int) and n_words > 0 else None
+    idx_schema: Dict[str, Any] = {"type": "integer"}
+    if max_idx is not None:
+        idx_schema = {"type": "integer", "minimum": 0, "maximum": max_idx}
     if pass_label == "pass1":
         return {
             "type": "object",
@@ -38,8 +46,8 @@ def _google_json_schema_for_pass(pass_label: str | None) -> Dict[str, Any] | Non
                         "type": "object",
                         "properties": {
                             "type": {"type": "string", "enum": ["replace", "delete"]},
-                            "start_idx": {"type": "integer"},
-                            "end_idx": {"type": "integer"},
+                            "start_idx": idx_schema,
+                            "end_idx": idx_schema,
                             "text": {"type": "string"},
                         },
                         "required": ["type", "start_idx", "end_idx"],
@@ -48,7 +56,7 @@ def _google_json_schema_for_pass(pass_label: str | None) -> Dict[str, Any] | Non
             },
             "required": ["operations"],
         }
-    if pass_label in {"pass2", "pass3", "pass4", "pass2to4"}:
+    if pass_label in {"pass2", "pass2_repair", "pass3", "pass4", "pass2to4"}:
         return {
             "type": "object",
             "properties": {
@@ -57,8 +65,8 @@ def _google_json_schema_for_pass(pass_label: str | None) -> Dict[str, Any] | Non
                     "items": {
                         "type": "object",
                         "properties": {
-                            "from": {"type": "integer"},
-                            "to": {"type": "integer"},
+                            "from": idx_schema,
+                            "to": idx_schema,
                             "text": {"type": "string"},
                         },
                         "required": ["from", "to", "text"],
@@ -379,33 +387,46 @@ def _has_same_line_ranges(before: Sequence["LineRange"], after: Sequence["LineRa
     return True
 
 
-def _repair_line_ranges_to_contiguous_prefix(
+def _normalize_line_ranges(
     lines: Sequence["LineRange"],
     n_words: int,
-) -> List["LineRange"]:
-    """Repair invalid Pass2 line ranges by re-assigning them sequentially.
+) -> tuple[List["LineRange"] | None, str | None]:
+    """Normalize LLM returned (from/to) semantics without changing the split/text.
 
-    Gemini などのモデルが `from/to` を 1 始まりにしたり、重複/欠落を含む範囲を返すと
-    そのままでは実行が止まってしまう。ここでは「行の順序と text は尊重しつつ」、
-    `to-from+1`（行が占める語数）を元に 0 始まりの連続範囲へ再割り当てする。
+    目的は「出力品質（行の内容や分割）を変えずに、index表現の違いだけ吸収する」こと。
+    具体的には以下のよくあるズレを検出して補正する:
+
+    - 1始まり（one-based）: 1..N を 0..N-1 に補正
+    - 終端exclusive（half-open）: [from, to) を [from, to-1] に補正
+
+    いずれも補正後に「0から始まる連続prefix（ギャップ/オーバーラップなし）」になった場合のみ採用する。
     """
     if not lines or n_words <= 0:
-        return []
+        return None, None
 
-    repaired: List[LineRange] = []
-    cursor = 0
+    # (name, start_delta, end_delta)
+    candidates = [
+        ("as-is", 0, 0),
+        ("end-exclusive", 0, -1),
+        ("one-based", -1, -1),
+        ("one-based end-exclusive", -1, -2),
+    ]
 
-    for line in lines:
-        if cursor >= n_words:
-            break
-        desired_len = (line.end_idx - line.start_idx + 1) if (line.end_idx is not None and line.start_idx is not None) else 0
-        if desired_len <= 0:
-            desired_len = 1
-        end = min(cursor + desired_len - 1, n_words - 1)
-        repaired.append(LineRange(start_idx=cursor, end_idx=end, text=line.text))
-        cursor = end + 1
+    for name, start_delta, end_delta in candidates:
+        transformed = [
+            LineRange(
+                start_idx=line.start_idx + start_delta,
+                end_idx=line.end_idx + end_delta,
+                text=line.text,
+            )
+            for line in lines
+        ]
+        if _has_contiguous_prefix_coverage(transformed, n_words):
+            # 正規化後は安定した順に揃える
+            transformed = sorted(transformed, key=lambda l: (l.start_idx, l.end_idx))
+            return transformed, name
 
-    return repaired
+    return None, None
 
 
 class TwoPassFormatter:
@@ -471,6 +492,8 @@ class TwoPassFormatter:
         # テロップ開始時間遅延（秒）。2番目以降のセグメントのstartをこの秒数だけ遅らせる。
         # 最初のセグメントのstartと最後のセグメントのendは維持される。
         self.start_delay = start_delay
+        # Gemini structured output (JSON Schema) で index 範囲を制約するための現在の語数
+        self._structured_output_n_words: int | None = None
 
     # --- logging helpers -------------------------------------------------
 
@@ -519,7 +542,7 @@ class TwoPassFormatter:
             # Gemini structured output: request JSON for two-pass prompts.
             # If unsupported by the selected model, provider will fall back to plain text mode.
             metadata["google_response_mime_type"] = "application/json"
-            schema = _google_json_schema_for_pass(pass_label)
+            schema = _google_json_schema_for_pass(pass_label, n_words=self._structured_output_n_words)
             if schema is not None:
                 metadata["google_response_json_schema"] = schema
         # run_id / source_name / pass_label をメタデータに載せておくと、
@@ -556,6 +579,7 @@ class TwoPassFormatter:
             raise FormatterError("wordタイムスタンプが空です")
         try:
             logger.info("two-pass: pass1 start (words=%d, provider=%s)", len(words), self.provider_slug)
+            self._structured_output_n_words = len(words)
             # Pass1: replace/delete only
             pass1_prompt = self._build_pass1_prompt(text, words)
             logger.debug("Calling LLM for Pass 1. Prompt length: %d", len(pass1_prompt))
@@ -604,6 +628,7 @@ class TwoPassFormatter:
             record_pass_time(self.run_id, "pass1", t_p1_end - t_p1_start)
             ops = _parse_operations(parsed1)
             updated_words = _apply_operations(words, ops) if ops else list(words)
+            self._structured_output_n_words = len(updated_words)
 
             if not updated_words:
                 # If all words deleted, return empty result (valid case)
@@ -678,24 +703,20 @@ class TwoPassFormatter:
                 raise FormatterError("行分割結果が空です")
             lines = sorted(pass2_lines_raw, key=lambda l: (l.start_idx, l.end_idx))
             if not _has_contiguous_prefix_coverage(lines, len(updated_words)):
-                # LLM が 1 始まりの index や重複/欠落を含む範囲を返すことがある。
-                # その場合でも処理を止めず、範囲を修復して続行する。
-                repaired = _repair_line_ranges_to_contiguous_prefix(pass2_lines_raw, len(updated_words))
-                repaired = sorted(repaired, key=lambda l: (l.start_idx, l.end_idx))
-                if _has_contiguous_prefix_coverage(repaired, len(updated_words)):
-                    logger.warning(
-                        "Pass 2 returned invalid ranges; repaired to contiguous prefix (words=%d, lines=%d)",
-                        len(updated_words),
-                        len(repaired),
-                    )
-                    lines = repaired
+                normalized, mode = _normalize_line_ranges(pass2_lines_raw, len(updated_words))
+                if normalized is not None:
+                    if mode and mode != "as-is":
+                        logger.warning("Pass 2 ranges normalized (%s)", mode)
+                    lines = normalized
                 else:
-                    logger.warning(
-                        "Pass 2 returned invalid ranges and repair failed; falling back to local split (words=%d, lines=%d)",
-                        len(updated_words),
-                        len(pass2_lines_raw),
+                    repaired = self._repair_pass2_ranges_with_llm(
+                        words=updated_words,
+                        original_lines=pass2_lines_raw,
                     )
-                    lines = self._fallback_split_all_words(updated_words, max_chars=max_chars)
+                    if repaired is None:
+                        raise FormatterError("行分割結果の範囲（from/to）が不正です")
+                    logger.warning("Pass 2 ranges repaired by LLM (pass2_repair)")
+                    lines = repaired
             pass2_lines = lines
 
             # Pass3: Validation (now always executed)
@@ -977,59 +998,80 @@ class TwoPassFormatter:
         # 元の行とフォールバック行を start_idx でソートして返す
         return sorted(fallback_lines, key=lambda l: (l.start_idx, l.end_idx))
 
-    def _fallback_split_all_words(
+    def _repair_pass2_ranges_with_llm(
         self,
-        words: Sequence[WordTimestamp],
         *,
-        max_chars: float,
-    ) -> List[LineRange]:
-        """Local fallback line splitting when Pass2 returns invalid ranges.
+        words: Sequence[WordTimestamp],
+        original_lines: Sequence[LineRange],
+    ) -> List[LineRange] | None:
+        """Ask LLM to fix only (from/to), keeping line texts unchanged.
 
-        実行を止めずに最後まで SRT を生成することを優先し、単純なルールで行分割する。
+        Pass2 が `from/to` を不正に返したとき、ローカル分割に落とすと出力が変わりやすい。
+        ここでは「行テキストは変更しない」という前提で、範囲だけを再生成させる。
         """
-        if not words:
-            return []
+        if not words or not original_lines:
+            return None
 
-        n_words = len(words)
-        max_idx = n_words - 1
-        max_len = min(int(max_chars), 17)
-        min_len = 5
-        if max_len < min_len:
-            max_len = min_len
+        indexed_words = "\n".join([f"{i}:{w.word or ''}" for i, w in enumerate(words)])
+        line_texts_json = json.dumps(
+            [{"text": l.text} for l in original_lines],
+            ensure_ascii=False,
+            indent=2,
+        )
+        last_idx = len(words) - 1
 
-        lines: List[LineRange] = []
-        idx = 0
-        while idx <= max_idx:
-            line_start = idx
-            text_parts: List[str] = []
-            current_len = 0
+        prompt = (
+            "# Role\n"
+            "あなたは字幕編集者です。以下の単語リスト（index:word）と字幕行テキストを見て、\n"
+            "各字幕行が対応する単語インデックス範囲（from/to）を割り当て直してください。\n\n"
+            "# 重要ルール（厳守）\n"
+            "- インデックスは **0始まり**\n"
+            f"- from/to は **両端含む**（0..{last_idx}）\n"
+            "- 行の順序と行数は変更しない\n"
+            "- 各行の text は **一字一句変更禁止**（入力の text をそのまま出力する）\n"
+            "- 範囲はギャップ/オーバーラップ無しで **連続**（from は前行の to+1）\n"
+            "- 各行は最低1語を含める（from <= to）\n\n"
+            "# Input\n"
+            f"単語リスト（index:word）:\n{indexed_words}\n\n"
+            "字幕行テキスト（順序/文言は変更禁止）:\n"
+            f"{line_texts_json}\n\n"
+            "# Output\n"
+            "以下のJSONのみを返してください（説明・コードフェンス禁止）:\n"
+            "{\n"
+            '  "lines": [\n'
+            '    {"from": 0, "to": 3, "text": "（上の入力と完全一致の文字列）"},\n'
+            '    {"from": 4, "to": 7, "text": "（上の入力と完全一致の文字列）"}\n'
+            "  ]\n"
+            "}\n"
+        )
 
-            while idx <= max_idx:
-                word = words[idx].word or ""
-                next_len = current_len + len(word)
-                if text_parts and next_len > max_len and current_len >= min_len:
-                    break
-                text_parts.append(word)
-                current_len = next_len
-                idx += 1
-                if current_len >= max_len:
-                    break
+        _, parsed = _call_llm_with_parse(
+            self._call_llm,
+            pass_label="pass2_repair",
+            prompt=prompt,
+            model_override=self.pass2_model,
+            retries=2,
+            soft_fail=True,
+            log_sink=self,
+        )
+        if not parsed:
+            return None
 
-            line_end = idx - 1
-            if line_end < line_start:
-                # 万一進まなかった場合でも無限ループを避ける
-                line_end = line_start
-                idx = line_start + 1
+        repaired = _parse_lines(parsed)
+        if len(repaired) != len(original_lines):
+            return None
 
-            lines.append(
-                LineRange(
-                    start_idx=line_start,
-                    end_idx=line_end,
-                    text="".join(text_parts),
-                )
-            )
+        # テキストは入力を優先（LLMが勝手に変えても出力品質を変えない）
+        fixed = [
+            LineRange(start_idx=out.start_idx, end_idx=out.end_idx, text=orig.text)
+            for orig, out in zip(original_lines, repaired)
+        ]
+        fixed = sorted(fixed, key=lambda l: (l.start_idx, l.end_idx))
 
-        return lines
+        if not _has_contiguous_prefix_coverage(fixed, len(words)):
+            return None
+
+        return fixed
 
     def _build_pass1_prompt(self, raw_text: str, words: Sequence[WordTimestamp]) -> str:
         if self.workflow_def.pass1_prompt is None:

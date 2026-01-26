@@ -75,8 +75,8 @@ def test_trailing_words_are_covered_by_fallback(monkeypatch):
 
 def test_invalid_pass2_ranges_are_repaired(monkeypatch):
     """
-    Pass2 が `from/to` の範囲を不正に返しても（1始まり/欠落/重複など）、
-    範囲修復＋フォールバックにより処理が停止しないことを確認する。
+    Pass2 が `from/to` の範囲を不正に返しても（例: 1始まり）、
+    index表現の正規化により処理が停止しないことを確認する。
     """
 
     words = [
@@ -122,6 +122,71 @@ def test_invalid_pass2_ranges_are_repaired(monkeypatch):
 
     assert result is not None
     assert result.segments[-1].end >= words[-1].end
+
+
+def test_invalid_pass2_ranges_are_fixed_by_llm_repair(monkeypatch):
+    """
+    Pass2 がギャップ/オーバーラップを含む不正な範囲を返し、単純な正規化で直せない場合でも、
+    「行テキストを変えずに範囲だけ再生成」することで処理が進むことを確認する。
+    """
+
+    words = [
+        WordTimestamp(word="ワン", start=0.0, end=0.5),
+        WordTimestamp(word="ツー", start=0.5, end=1.0),
+        WordTimestamp(word="スリー", start=1.0, end=1.5),
+        WordTimestamp(word="フォー", start=1.5, end=2.0),
+        WordTimestamp(word="ファイブ", start=2.0, end=2.5),
+        WordTimestamp(word="シックス", start=2.5, end=3.0),
+    ]
+
+    calls: list[str] = []
+
+    def fake_call_llm(self, payload: str, model_override=None, pass_label=None):
+        calls.append(pass_label or "")
+        if pass_label == "pass1":
+            return json.dumps({"operations": []}, ensure_ascii=False)
+        if pass_label == "pass2":
+            # ギャップのある不正な範囲（正規化では直せない想定）
+            return json.dumps(
+                {
+                    "lines": [
+                        {"from": 0, "to": 0, "text": "ワンツースリー"},
+                        {"from": 2, "to": 5, "text": "フォーファイブシックス"},
+                    ]
+                },
+                ensure_ascii=False,
+            )
+        if pass_label == "pass2_repair":
+            # textはそのまま、範囲だけを修正した結果を返す
+            return json.dumps(
+                {
+                    "lines": [
+                        {"from": 0, "to": 2, "text": "ワンツースリー"},
+                        {"from": 3, "to": 5, "text": "フォーファイブシックス"},
+                    ]
+                },
+                ensure_ascii=False,
+            )
+        # Pass3/Pass4: 範囲は維持
+        return json.dumps(
+            {
+                "lines": [
+                    {"from": 0, "to": 2, "text": "ワンツースリー"},
+                    {"from": 3, "to": 5, "text": "フォーファイブシックス"},
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr("src.llm.validators.detect_issues", lambda lines, words: [])
+    monkeypatch.setattr(TwoPassFormatter, "_call_llm", fake_call_llm)
+
+    formatter = TwoPassFormatter(llm_provider="google")
+    result = formatter.run(text="".join(w.word for w in words), words=words)
+
+    assert result is not None
+    assert "pass2_repair" in calls
+    assert any("ワンツースリー" == seg.text for seg in result.segments)
 
 
 def _words_with_internal_gap() -> List[WordTimestamp]:
