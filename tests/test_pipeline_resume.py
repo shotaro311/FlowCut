@@ -23,9 +23,9 @@ def create_progress(tmp_path: Path, *, status: str = "failed") -> Path:
     audio_path = tmp_path / "sample.wav"
     audio_path.write_text("dummy")
     record = ProgressRecord(
-        run_id="sample_kotoba_20251120T173552",
+        run_id="sample_whisper-local_20251120T173552",
         audio_file=str(audio_path),
-        model="kotoba",
+        model="whisper-local",
         total_blocks=2,
         llm_provider=None,
         status=status,
@@ -58,9 +58,9 @@ def test_prepare_resume_run_uses_metadata(tmp_path):
     progress_path = create_progress(tmp_path)
     base_options = PocRunOptions(output_dir=tmp_path / "out", progress_dir=tmp_path / "prog", simulate=True, verbose=False)
     record, audio_files, models, resume_options = prepare_resume_run(progress_path, base_options=base_options)
-    assert record.model == "kotoba"
+    assert record.model == "whisper-local"
     assert audio_files[0].name == "sample.wav"
-    assert models == ["kotoba"]
+    assert models == ["whisper-local"]
     assert resume_options.language == "ja"
     assert resume_options.chunk_size == 1024
     assert resume_options.simulate is False

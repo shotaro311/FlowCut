@@ -44,7 +44,7 @@ def test_execute_poc_run_passes_timeout(tmp_path):
     )
 
     try:
-        execute_poc_run([audio], ["openai"], options)
+        execute_poc_run([audio], ["whisper-local"], options)
     finally:
         fmt._PROVIDER_REGISTRY.clear()
         fmt._PROVIDER_REGISTRY.update(registry_backup)

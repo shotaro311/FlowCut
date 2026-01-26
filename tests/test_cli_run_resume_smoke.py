@@ -21,9 +21,9 @@ def _create_resume_file(base_dir: Path) -> Path:
     audio_path.write_text("dummy audio data")
 
     record = ProgressRecord(
-        run_id="sample_audio_openai_20251120T120000",
+        run_id="sample_audio_whisper-local_20251120T120000",
         audio_file=str(audio_path),
-        model="openai",
+        model="whisper-local",
         total_blocks=1,
         llm_provider=None,
         status="failed",

@@ -96,6 +96,83 @@ def test_google_provider_requires_api_key(monkeypatch):
         provider.format(prompt, request)
 
 
+def test_google_provider_structured_output_sets_response_mime_and_schema(monkeypatch):
+    monkeypatch.setenv("GOOGLE_API_KEY", "gg-test")
+    monkeypatch.setenv("GOOGLE_MODEL", "gemini-test")
+    reload_settings()
+
+    schema = {
+        "type": "object",
+        "properties": {"operations": {"type": "array", "items": {"type": "object"}}},
+        "required": ["operations"],
+    }
+    payload = {"candidates": [{"content": {"parts": [{"text": '{"operations": []}'}]}}]}
+
+    def fake_post(*args, **kwargs):
+        gen = kwargs["json"]["generationConfig"]
+        assert gen["responseMimeType"] == "application/json"
+        assert gen["responseJsonSchema"] == schema
+        return DummyResponse(payload)
+
+    import src.llm.providers.google_provider as google_provider
+
+    monkeypatch.setattr(google_provider.requests, "post", fake_post)
+    provider = GoogleGeminiProvider()
+    prompt = build_subtitle_prompt("設定")
+    request = FormatterRequest(
+        block_text="設定",
+        provider="google",
+        metadata={
+            "google_response_mime_type": "application/json",
+            "google_response_json_schema": schema,
+        },
+    )
+    text = provider.format(prompt, request)
+    assert '"operations"' in text
+
+
+def test_google_provider_structured_output_falls_back_on_error(monkeypatch):
+    monkeypatch.setenv("GOOGLE_API_KEY", "gg-test")
+    monkeypatch.setenv("GOOGLE_MODEL", "gemini-test")
+    reload_settings()
+
+    schema = {"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]}
+    ok_payload = {"candidates": [{"content": {"parts": [{"text": "ok[WORD: ok]"}]}}]}
+
+    calls = {"n": 0}
+
+    def fake_post(*args, **kwargs):
+        calls["n"] += 1
+        gen = kwargs["json"]["generationConfig"]
+        if calls["n"] == 1:
+            assert gen.get("responseMimeType") == "application/json"
+            # Simulate API rejecting structured output.
+            resp = DummyResponse({}, status_code=400)
+            resp.text = "bad request"
+            return resp
+        assert "responseMimeType" not in gen
+        assert "responseSchema" not in gen
+        assert "responseJsonSchema" not in gen
+        return DummyResponse(ok_payload)
+
+    import src.llm.providers.google_provider as google_provider
+
+    monkeypatch.setattr(google_provider.requests, "post", fake_post)
+    provider = GoogleGeminiProvider()
+    prompt = build_subtitle_prompt("設定")
+    request = FormatterRequest(
+        block_text="設定",
+        provider="google",
+        metadata={
+            "google_response_mime_type": "application/json",
+            "google_response_json_schema": schema,
+        },
+    )
+    text = provider.format(prompt, request)
+    assert "ok" in text
+    assert calls["n"] == 2
+
+
 def test_anthropic_provider_parses_response(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "ak-test")
     monkeypatch.setenv("ANTHROPIC_MODEL", "claude-test")

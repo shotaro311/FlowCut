@@ -64,12 +64,12 @@ def test_execute_poc_run_uses_pass5_provider_when_overridden(tmp_path):
     )
 
     try:
-        execute_poc_run([audio], ["openai"], options)
+        execute_poc_run([audio], ["whisper-local"], options)
     finally:
         fmt._PROVIDER_REGISTRY.clear()
         fmt._PROVIDER_REGISTRY.update(registry_backup)
 
     srt_files = list((tmp_path / "subs").glob("*.srt"))
     assert len(srt_files) == 1
-    content = srt_files[0].read_text()
+    content = srt_files[0].read_text(encoding="utf-8")
     assert "こんにちは世界\nこんにちは" in content

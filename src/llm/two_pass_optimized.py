@@ -74,14 +74,13 @@ class TwoPassFormatter(BaseTwoPassFormatter):
     def _validate_pass4_replacement(self, repl: Sequence[LineRange], orig: LineRange, n_words: int) -> bool:
         """Validate Pass4 replacement.
 
-        - すべての行が 5〜max 文字に収まっていること
+        - すべての行が 5〜17 文字に収まっていること
         - インデックスが orig の範囲内で、orig の範囲を完全にカバーすること
         """
         if not repl:
             return False
-        max_chars = getattr(self, "_current_line_max_chars", 17)
         for lr in repl:
-            if len(lr.text) > max_chars or len(lr.text) < 5:
+            if len(lr.text) > 17 or len(lr.text) < 5:
                 return False
             if lr.start_idx < 0 or lr.end_idx >= n_words or lr.start_idx > lr.end_idx:
                 return False

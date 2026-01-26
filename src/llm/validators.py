@@ -18,7 +18,7 @@ class LineRange:
 @dataclass
 class ValidationIssue:
     """Represents a detected issue in the output."""
-    type: Literal["short_particle_line", "split_quotation", "missing_coverage"]
+    type: Literal["short_particle_line", "split_quotation"]
     line_idx: int
     severity: Literal["high", "medium"]
     description: str
@@ -40,41 +40,7 @@ def detect_issues(
         List of detected issues
     """
     issues = []
-
-    # Rule 0: Missing coverage (gaps between line ranges)
-    if lines:
-        ordered = sorted(lines, key=lambda l: (l.start_idx, l.end_idx))
-        prev_end = ordered[0].end_idx
-        if ordered[0].start_idx > 0:
-            issues.append(ValidationIssue(
-                type="missing_coverage",
-                line_idx=0,
-                severity="high",
-                description=f"行範囲に欠落があります（0-{ordered[0].start_idx - 1}）",
-                suggested_action="欠けている範囲を追加し、連続した範囲になるよう補完",
-            ))
-        for idx, line in enumerate(ordered[1:], start=1):
-            if line.start_idx > prev_end + 1:
-                issues.append(ValidationIssue(
-                    type="missing_coverage",
-                    line_idx=idx - 1,
-                    severity="high",
-                    description=f"行範囲に欠落があります（{prev_end + 1}-{line.start_idx - 1}）",
-                    suggested_action="欠けている範囲を追加し、連続した範囲になるよう補完",
-                ))
-            if line.end_idx > prev_end:
-                prev_end = line.end_idx
-        if words:
-            max_idx = len(words) - 1
-            if prev_end < max_idx:
-                issues.append(ValidationIssue(
-                    type="missing_coverage",
-                    line_idx=len(ordered) - 1,
-                    severity="high",
-                    description=f"行範囲に欠落があります（{prev_end + 1}-{max_idx}）",
-                    suggested_action="欠けている範囲を追加し、連続した範囲になるよう補完",
-                ))
-
+    
     # Rule 1: Short line (< 5 chars) - 5文字未満の行は全て検出
     PARTICLES = ["を", "に", "で", "が", "は", "も", "から", "まで", "へ", "と"]
     for i, line in enumerate(lines):

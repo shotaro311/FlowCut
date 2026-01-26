@@ -19,7 +19,7 @@ def test_create_and_complete_blocks(tmp_path):
     record = create_progress_record(
         run_id="run-1",
         audio_file="samples/test.wav",
-        model="kotoba",
+        model="whisper-local",
         total_blocks=2,
     )
     assert record.total_blocks == 2

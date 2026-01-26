@@ -33,18 +33,6 @@ class OpenAIChatProvider(BaseLLMProvider):
             # gpt-4o-mini 系は temperature=1 が必須。指定が無い場合は1に固定する。
             "temperature": 1 if request.temperature is None else request.temperature,
         }
-        if request.metadata:
-            schema = request.metadata.get("structured_output_schema")
-            if schema:
-                name = request.metadata.get("structured_output_name") or "structured_output"
-                payload["response_format"] = {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": name,
-                        "schema": schema,
-                        "strict": True,
-                    },
-                }
         timeout = request.timeout if request.timeout is not None else settings.request_timeout
         
         headers = {

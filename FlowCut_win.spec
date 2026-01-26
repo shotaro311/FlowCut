@@ -14,9 +14,39 @@ import os
 # whisper パッケージ一式（コード + assets）をまとめて同梱する。
 datas = [('config', 'config')]
 binaries = []
-hiddenimports = ['whisper']
+hiddenimports = ['whisper', 'faster_whisper']
+
+ROOT_DIR = os.path.abspath(globals().get("specpath") or os.getcwd())
+
+
+def _find_ffmpeg_exe() -> str | None:
+    for key in ("FLOWCUT_FFMPEG_EXE", "FFMPEG_EXE"):
+        raw_path = os.environ.get(key)
+        if not raw_path:
+            continue
+        candidate = os.path.expandvars(raw_path)
+        if not os.path.isabs(candidate):
+            candidate = os.path.join(ROOT_DIR, candidate)
+        if os.path.exists(candidate):
+            return candidate
+    bundled = os.path.join(ROOT_DIR, "assets", "ffmpeg", "ffmpeg.exe")
+    if os.path.exists(bundled):
+        return bundled
+    return None
+
+
+ffmpeg_exe = _find_ffmpeg_exe()
+if ffmpeg_exe:
+    binaries.append((ffmpeg_exe, "ffmpeg_bin"))
+
+# Optional: include license texts for redistributed ffmpeg binary.
+ffmpeg_licenses_dir = os.path.join(ROOT_DIR, "assets", "ffmpeg", "licenses")
+if os.path.isdir(ffmpeg_licenses_dir):
+    datas.append((ffmpeg_licenses_dir, os.path.join("licenses", "ffmpeg")))
 
 tmp_ret = collect_all('whisper')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('faster_whisper')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 # さらに、実際の whisper パッケージの場所から mel_filters.npz を特定して、
@@ -48,6 +78,24 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
+# Prefer system-installed VC++ runtime DLLs over bundled ones.
+# Some native stacks (torch / onnxruntime / ctranslate2) can become unstable when
+# older VC runtime DLLs are bundled into the app directory.
+_VC_RUNTIME_DLLS = {
+    "msvcp140.dll",
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+}
+try:
+    a.binaries = [
+        entry
+        for entry in a.binaries
+        if os.path.basename(entry[0]).lower() not in _VC_RUNTIME_DLLS
+    ]
+except Exception:
+    # If filtering fails for some reason, continue with the original binaries list.
+    pass
 pyz = PYZ(a.pure)
 
 exe = EXE(

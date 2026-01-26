@@ -10,7 +10,6 @@ project_root = test_dir.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from src.transcribe.kotoba_runner import KotobaRunner
 from src.transcribe.mlx_runner import MlxRunner
 from src.transcribe.base import TranscriptionConfig, TranscriptionError
 
@@ -34,13 +33,12 @@ def _patch_mlx(monkeypatch):
     monkeypatch.setitem(sys.modules, "mlx_whisper", fake_mod)
 
 
-@pytest.mark.parametrize("runner_cls", [KotobaRunner, MlxRunner])
-def test_mlx_runners_use_native(monkeypatch, tmp_path: Path, runner_cls):
+def test_mlx_runner_uses_native(monkeypatch, tmp_path: Path):
     audio = tmp_path / "audio.m4a"
     audio.write_bytes(b"dummy")
     _patch_mlx(monkeypatch)
 
-    runner = runner_cls()
+    runner = MlxRunner()
     result = runner.transcribe(audio, TranscriptionConfig(simulate=False, language="ja"))
     assert result.text == "dummy text"
     assert len(result.words) == 2

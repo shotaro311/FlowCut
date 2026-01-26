@@ -10,8 +10,9 @@ from tkinter import filedialog, messagebox, ttk
 
 from src.config.settings import get_settings
 from src.llm.profiles import get_profile, list_models_by_provider, reload_profiles
-from src.llm.workflows.registry import get_workflow, list_workflows
+from src.llm.workflows.registry import get_workflow
 from src.gui.config import get_config
+from src.pipeline import list_models as list_transcribe_models
 
 
 class WorkflowPanel(ttk.Frame):
@@ -42,24 +43,23 @@ class WorkflowPanel(ttk.Frame):
         self.rolling_dots = 0
         self.rolling_timer_id = None
         
-        # Whisperランナー変数
-        self.whisper_runner_var = tk.StringVar(value="openai")
-
         # LLM関連変数
-        self.workflow_var = tk.StringVar(value="workflow1")
+        self.workflow_var = tk.StringVar(value="workflow2")
         self.pass1_model_var = tk.StringVar()
         self.pass2_model_var = tk.StringVar()
         self.pass3_model_var = tk.StringVar()
         self.pass4_model_var = tk.StringVar()
         self.start_delay_var = tk.StringVar(value="0.2")
-        self.line_max_chars_var = tk.StringVar(value="17")
         self.advanced_visible = tk.BooleanVar(value=False)
-        self.save_logs_var = tk.BooleanVar(value=True)
+        self.save_logs_var = tk.BooleanVar(value=False)
         self.keep_extracted_audio_var = tk.BooleanVar(value=False)
         self.notify_on_complete_var = tk.BooleanVar(value=False)
         self.pass5_enabled_var = tk.BooleanVar(value=False)
         self.pass5_max_chars_var = tk.StringVar(value="17")
         self.pass5_model_var = tk.StringVar()
+        self.transcribe_runner_var = tk.StringVar()
+        self.transcribe_desc_var = tk.StringVar(value="")
+        self._transcribe_choices: list[dict] = []
         
         # モデル一覧
         self._models_by_provider = list_models_by_provider()
@@ -110,73 +110,28 @@ class WorkflowPanel(ttk.Frame):
         ttk.Label(output_frame, textvariable=self.output_dir_var, anchor=tk.W).pack(side=tk.LEFT, fill=tk.X, expand=True)
         select_output_button = ttk.Button(output_frame, text="保存先を変更", command=self.select_output_dir)
         select_output_button.pack(side=tk.RIGHT)
-        
-        # 音声認識エンジン選択
-        whisper_frame = ttk.LabelFrame(self, text="音声認識")
-        whisper_frame.pack(fill=tk.X, pady=(0, 8))
 
-        whisper_row = ttk.Frame(whisper_frame)
-        whisper_row.pack(fill=tk.X, pady=(4, 4))
-        ttk.Label(whisper_row, text="エンジン:").pack(side=tk.LEFT)
-        whisper_options = [
-            ("openai", "OpenAI Whisper（推奨）"),
-            ("mlx", "MLX Whisper（高速）"),
-        ]
-        self._whisper_runner_labels = {k: v for k, v in whisper_options}
-        whisper_combo = ttk.Combobox(
-            whisper_row,
-            textvariable=self.whisper_runner_var,
-            values=[k for k, _ in whisper_options],
+        # 文字起こしエンジン（ランナー）選択
+        transcribe_frame = ttk.Frame(self)
+        transcribe_frame.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(transcribe_frame, text="文字起こし:").pack(side=tk.LEFT)
+        self._transcribe_choices = self._load_transcribe_choices()
+        transcribe_combo = ttk.Combobox(
+            transcribe_frame,
+            textvariable=self.transcribe_runner_var,
+            values=[c["slug"] for c in self._transcribe_choices],
             state="readonly",
-            width=10,
+            width=18,
         )
-        whisper_combo.pack(side=tk.LEFT, padx=(4, 0))
-        whisper_combo.bind("<<ComboboxSelected>>", self._on_whisper_runner_changed)
-        self._whisper_desc_label = ttk.Label(
-            whisper_row,
-            text="",
-            foreground="#888888",
+        transcribe_combo.pack(side=tk.LEFT, padx=(6, 0))
+        transcribe_combo.bind("<<ComboboxSelected>>", self._on_transcribe_runner_changed)
+        ttk.Label(transcribe_frame, textvariable=self.transcribe_desc_var, foreground="#888888").pack(
+            side=tk.LEFT, padx=(8, 0)
         )
-        self._whisper_desc_label.pack(side=tk.LEFT, padx=(8, 0))
-
+        
         # LLMオプション
         options_frame = ttk.LabelFrame(self, text="LLMオプション")
         options_frame.pack(fill=tk.X, pady=(0, 8))
-
-        # ワークフロー選択
-        workflow_row = ttk.Frame(options_frame)
-        workflow_row.pack(fill=tk.X, pady=(4, 2))
-        ttk.Label(workflow_row, text="ワークフロー:").pack(side=tk.LEFT)
-        workflow_options = [wf.slug for wf in list_workflows()]
-        workflow_combo = ttk.Combobox(
-            workflow_row,
-            textvariable=self.workflow_var,
-            values=workflow_options,
-            state="readonly",
-            width=16,
-        )
-        workflow_combo.pack(side=tk.LEFT, padx=(4, 0))
-        workflow_combo.bind("<<ComboboxSelected>>", self._on_workflow_changed)
-        ttk.Label(
-            workflow_row,
-            text="workflow1: 通常  workflow2: 通常（分割並列）  workflow3: 校正→行分割",
-            foreground="#888888",
-        ).pack(side=tk.LEFT, padx=(8, 0))
-
-        # 1行の最大文字数（全ワークフロー共通）
-        max_chars_row = ttk.Frame(options_frame)
-        max_chars_row.pack(fill=tk.X, pady=(2, 2))
-        ttk.Label(max_chars_row, text="最大文字数:").pack(side=tk.LEFT)
-        max_chars_combo = ttk.Combobox(
-            max_chars_row,
-            textvariable=self.line_max_chars_var,
-            values=[str(i) for i in range(12, 21)],
-            state="readonly",
-            width=4,
-        )
-        max_chars_combo.pack(side=tk.LEFT, padx=(4, 0))
-        max_chars_combo.bind("<<ComboboxSelected>>", self._on_line_max_chars_changed)
-        ttk.Label(max_chars_row, text="（字幕1行 / 12〜20）", foreground="#888888").pack(side=tk.LEFT, padx=(4, 0))
         
         # 詳細設定トグル
         advanced_row = ttk.Frame(options_frame)
@@ -281,7 +236,7 @@ class WorkflowPanel(ttk.Frame):
         output_row = ttk.Frame(self)
         output_row.pack(fill=tk.X, pady=(0, 2))
         self.output_label = ttk.Label(output_row, textvariable=self.output_var, anchor=tk.W)
-        self.output_label.pack(side=tk.LEFT, padx=(0, 8))
+        self.output_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.open_output_button = ttk.Button(
             output_row,
             text="開く",
@@ -289,7 +244,7 @@ class WorkflowPanel(ttk.Frame):
             state=tk.DISABLED,
             width=6,
         )
-        self.open_output_button.pack(side=tk.RIGHT)
+        self.open_output_button.pack(side=tk.RIGHT, padx=(8, 0))
 
         self.metrics_label = ttk.Label(self, textvariable=self.metrics_var)
         self.metrics_label.pack(fill=tk.X)
@@ -324,15 +279,16 @@ class WorkflowPanel(ttk.Frame):
 
     def _load_initial_settings(self) -> None:
         """初期設定を読み込む。"""
-        # Whisperランナー設定を読み込む
-        saved_runner = self.config.get_whisper_runner()
-        if saved_runner in self._whisper_runner_labels:
-            self.whisper_runner_var.set(saved_runner)
-        else:
-            self.whisper_runner_var.set("openai")
-        self._update_whisper_desc_label()
-
         self.workflow_var.set(self.config.get_workflow())
+
+        # 文字起こしランナー
+        available_slugs = {c["slug"] for c in self._transcribe_choices} if self._transcribe_choices else set()
+        runner = (self.config.get_transcribe_runner() or "").strip().lower()
+        if runner not in available_slugs:
+            runner = "mlx" if sys.platform == "darwin" and "mlx" in available_slugs else ("faster" if "faster" in available_slugs else (sorted(available_slugs)[0] if available_slugs else "whisper-local"))
+        self.transcribe_runner_var.set(runner)
+        self._update_transcribe_desc(runner)
+        self.config.set_transcribe_runner(runner)
 
         all_models = set(self._get_all_models())
         saved_pass1 = self.config.get_pass_model("pass1", "").strip()
@@ -394,7 +350,6 @@ class WorkflowPanel(ttk.Frame):
         self._render_advanced_pass_models()
         self._refresh_advanced_model_choices()
         self.start_delay_var.set(str(self.config.get_start_delay()))
-        self.line_max_chars_var.set(str(self.config.get_line_max_chars()))
         self.save_logs_var.set(bool(self.config.get_save_logs()))
         self.keep_extracted_audio_var.set(bool(self.config.get_keep_extracted_audio()))
         self.notify_on_complete_var.set(bool(self.config.get_notify_on_complete()))
@@ -410,7 +365,6 @@ class WorkflowPanel(ttk.Frame):
 
         self.pass5_enabled_var.set(bool(self.config.get_pass5_enabled()))
         self.pass5_max_chars_var.set(str(self.config.get_pass5_max_chars()))
-        self._clamp_pass5_max_chars_to_line_max()
         self._toggle_pass5()
 
     def select_file(self) -> None:
@@ -539,8 +493,6 @@ class WorkflowPanel(ttk.Frame):
         self.progress["value"] = 0
         self._start_rolling_animation()
 
-        line_max_chars = self._get_line_max_chars()
-
         pass5_max_chars = 17
         if enable_pass5:
             try:
@@ -555,28 +507,24 @@ class WorkflowPanel(ttk.Frame):
                 self._stop_rolling_animation()
                 self._set_running_state(False)
                 return
-            if pass5_max_chars > line_max_chars:
-                pass5_max_chars = line_max_chars
-                self.pass5_max_chars_var.set(str(pass5_max_chars))
-                self.config.set_pass5_max_chars(pass5_max_chars)
 
         start_delay = self._get_start_delay()
+        transcribe_models = (self.transcribe_runner_var.get() or "").strip().lower() or None
         
         # コントローラーで並列実行
         self.controller.run_workflow(
             workflow_id=self.workflow_id,
             audio_path=self.selected_file,
+            transcribe_models=transcribe_models,
             subtitle_dir=self.output_dir,
-            whisper_runner=self.whisper_runner_var.get(),
             llm_provider=provider,
             llm_profile=None,
-            workflow=self.workflow_var.get() or "workflow1",
+            workflow=self.workflow_var.get() or "workflow2",
             pass1_model=self.pass1_model_var.get().strip() or None,
             pass2_model=self.pass2_model_var.get().strip() or None,
             pass3_model=self.pass3_model_var.get().strip() or None,
             pass4_model=self.pass4_model_var.get().strip() or None,
             start_delay=start_delay,
-            line_max_chars=line_max_chars,
             keep_extracted_audio=bool(self.keep_extracted_audio_var.get()),
             enable_pass5=enable_pass5,
             pass5_max_chars=pass5_max_chars,
@@ -589,6 +537,42 @@ class WorkflowPanel(ttk.Frame):
             on_finish=self._on_finish,
             on_progress=self._on_progress,
         )
+
+    def _load_transcribe_choices(self) -> list[dict]:
+        try:
+            models = list_transcribe_models()
+        except Exception:
+            return []
+        out: list[dict] = []
+        for item in models:
+            slug = str(item.get("slug") or "").strip().lower()
+            if not slug:
+                continue
+            out.append({"slug": slug, "display_name": item.get("display_name"), "default_model": item.get("default_model")})
+        return out
+
+    def _on_transcribe_runner_changed(self, _event=None) -> None:
+        runner = (self.transcribe_runner_var.get() or "").strip().lower()
+        if runner:
+            self._update_transcribe_desc(runner)
+            self.config.set_transcribe_runner(runner)
+
+    def _update_transcribe_desc(self, runner: str) -> None:
+        label = ""
+        for item in self._transcribe_choices:
+            if item.get("slug") == runner:
+                display_name = str(item.get("display_name") or "").strip()
+                default_model = str(item.get("default_model") or "").strip()
+                parts = []
+                if display_name:
+                    parts.append(display_name)
+                if default_model:
+                    parts.append(f"model={default_model}")
+                label = " / ".join(parts)
+                break
+        if not label:
+            label = "（推奨: mlx）" if sys.platform == "darwin" else "（推奨: faster）"
+        self.transcribe_desc_var.set(label)
 
     def _on_start(self) -> None:
         """開始時のコールバック。"""
@@ -603,10 +587,6 @@ class WorkflowPanel(ttk.Frame):
             srt_path = next((p for p in output_paths if p.suffix.lower() == ".srt"), None)
             last_path = srt_path or output_paths[-1]
             display = f"{last_path.parent.name}/{last_path.name}" if last_path.parent.name else last_path.name
-            # 長いパス名を短縮（最大50文字）
-            if len(display) > 50:
-                # 中央を省略して表示
-                display = display[:24] + "..." + display[-23:]
             self.output_var.set(f"出力: {display}")
             self._last_output_dir = last_path.parent
             if self._last_output_dir.exists():
@@ -778,17 +758,6 @@ class WorkflowPanel(ttk.Frame):
         if current_phase:
             self.phase_var.set(current_phase.rstrip('.').rstrip())
 
-    def _on_whisper_runner_changed(self, _event: object) -> None:
-        runner = self.whisper_runner_var.get()
-        self.config.set_whisper_runner(runner)
-        self._update_whisper_desc_label()
-
-    def _update_whisper_desc_label(self) -> None:
-        """Whisperランナーの説明ラベルを更新する。"""
-        runner = self.whisper_runner_var.get()
-        desc = self._whisper_runner_labels.get(runner, "")
-        self._whisper_desc_label.configure(text=desc)
-
     def _on_workflow_changed(self, _event: object) -> None:
         self.config.set_workflow(self.workflow_var.get())
         self._render_advanced_pass_models()
@@ -816,7 +785,6 @@ class WorkflowPanel(ttk.Frame):
         enabled = bool(self.pass5_enabled_var.get())
         self.config.set_pass5_enabled(enabled)
         if enabled:
-            self._clamp_pass5_max_chars_to_line_max()
             self.pass5_frame.pack(fill=tk.X, pady=(4, 2))
         else:
             self.pass5_frame.pack_forget()
@@ -858,24 +826,18 @@ class WorkflowPanel(ttk.Frame):
 
     def _get_active_pass_names(self) -> list[str]:
         wf = get_workflow(self.workflow_var.get())
-        return wf.active_pass_model_keys()
+        if wf.two_call_enabled and wf.pass2to4_prompt is not None:
+            return ["pass1", "pass2"]
+        return ["pass1", "pass2", "pass3", "pass4"]
 
     def _sync_pass_models_to_provider(self, provider: str) -> None:
-        wf = get_workflow(self.workflow_var.get())
         mapping: dict[str, tk.StringVar] = {
             "pass1": self.pass1_model_var,
             "pass2": self.pass2_model_var,
             "pass3": self.pass3_model_var,
             "pass4": self.pass4_model_var,
         }
-        if wf.is_two_call_mode():
-            target_passes = ["pass2", "pass3", "pass4"]
-        else:
-            target_passes = ["pass2"]
-            if wf.pass3_enabled:
-                target_passes.append("pass3")
-            target_passes.append("pass4")
-        for pass_name in target_passes:
+        for pass_name in ("pass2", "pass3", "pass4"):
             var = mapping[pass_name]
             current = (var.get() or "").strip()
             if current and self._get_provider_for_model(current) == provider:
@@ -957,7 +919,7 @@ class WorkflowPanel(ttk.Frame):
         self._pass_model_combos = []
 
         wf = get_workflow(self.workflow_var.get())
-        if wf.is_two_call_mode():
+        if wf.two_call_enabled and wf.pass2to4_prompt is not None:
             rows = [
                 ("Pass1:", "pass1", self.pass1_model_var),
                 ("Pass2-4:", "pass2", self.pass2_model_var),
@@ -966,10 +928,9 @@ class WorkflowPanel(ttk.Frame):
             rows = [
                 ("Pass1:", "pass1", self.pass1_model_var),
                 ("Pass2:", "pass2", self.pass2_model_var),
+                ("Pass3:", "pass3", self.pass3_model_var),
                 ("Pass4:", "pass4", self.pass4_model_var),
             ]
-            if wf.pass3_enabled:
-                rows.insert(2, ("Pass3:", "pass3", self.pass3_model_var))
 
         models = self._get_all_models()
         for label_text, pass_name, var in rows:
@@ -986,19 +947,7 @@ class WorkflowPanel(ttk.Frame):
             combo.bind("<<ComboboxSelected>>", lambda _event, name=pass_name: self._on_pass_model_changed(name))
             self._pass_model_combos.append(combo)
 
-    def _get_line_max_chars(self) -> int:
-        raw = (self.line_max_chars_var.get() or "").strip()
-        try:
-            value = int(raw)
-        except (TypeError, ValueError):
-            value = 17
-        if value < 12:
-            value = 12
-        if value > 20:
-            value = 20
-        return value
-
-    def _clamp_pass5_max_chars_to_line_max(self) -> None:
+    def _on_pass5_max_chars_changed(self, _event: object) -> None:
         raw = (self.pass5_max_chars_var.get() or "").strip()
         try:
             value = int(raw)
@@ -1006,21 +955,8 @@ class WorkflowPanel(ttk.Frame):
             value = 17
         if value < 8:
             value = 8
-        line_max_chars = self._get_line_max_chars()
-        if value > line_max_chars:
-            value = line_max_chars
         self.pass5_max_chars_var.set(str(value))
         self.config.set_pass5_max_chars(value)
-
-    def _on_line_max_chars_changed(self, _event: object) -> None:
-        value = self._get_line_max_chars()
-        self.line_max_chars_var.set(str(value))
-        self.config.set_line_max_chars(value)
-        if bool(self.pass5_enabled_var.get()):
-            self._clamp_pass5_max_chars_to_line_max()
-
-    def _on_pass5_max_chars_changed(self, _event: object) -> None:
-        self._clamp_pass5_max_chars_to_line_max()
 
     def _on_pass5_model_changed(self, _event: object) -> None:
         model = (self.pass5_model_var.get() or "").strip()

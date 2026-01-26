@@ -13,8 +13,7 @@ CLI（コマンドラインインターフェース）を使用してFlow Cutを
   pip install -r requirements-dev.txt
   ```
 
-- 環境変数: `.env.example` をコピーし、少なくとも `GOOGLE_API_KEY` を設定（OpenAI の LLM/API を使う場合のみ `OPENAI_API_KEY` も設定）。  
-  Whisper APIを使う場合は `OPENAI_WHISPER_MODEL`（例: whisper-1）も確認。
+- 環境変数: `.env.example` をコピーし、少なくとも `GOOGLE_API_KEY` を設定（OpenAI の LLM を使う場合のみ `OPENAI_API_KEY` も設定）。
 
 ### 1. 前提条件
 
@@ -88,7 +87,7 @@ python -m src.cli.main run /path/to/video.mp4 \
 | `--llm` | LLMプロバイダー指定 (google, openai, anthropic) | `--llm openai` |
 | `--llm-profile` | `config/llm_profiles.json` のプロファイルを使用 | `--llm-profile high_accuracy` |
 | `--start-delay` | 字幕全体の開始時間を遅らせる（秒）。冒頭の無音調整用 | `--start-delay 0.5` |
-| `--workflow` | 使用するワークフロー (`workflow1`, `workflow2`) | `--workflow workflow2` |
+| `--workflow` | 使用するワークフロー（`workflow2` のみ） | `--workflow workflow2` |
 | `--keep-audio` | 動画から抽出した音声ファイルを保存する | `--keep-audio` |
 | `--simulate` | 音声認識をスキップし、ダミーデータでLLM整形のみテスト | `--simulate` (デフォルト有効) |
 | `--no-simulate` | 実際に音声認識(Whisper)を実行する | `--no-simulate` |
@@ -162,9 +161,9 @@ python -m src.cli.main cleanup --days 3
 
 ## 次に触るときのチェックリスト
 
-- `.env` のキーとモデル名が有効か（特に `OPENAI_WHISPER_MODEL`）。
+- `.env` のキーとモデル名が有効か。
 - `temp/` の肥大化は `cleanup` サブコマンドで掃除。
-- 長尺サンプルを受領したら、2モデル（mlx / openai）で実行して `reports/poc_whisper_metrics.csv` を更新。行分割は two-pass の出力を使用し、アライン調整は不要。
+- 長尺サンプルを受領したら、2モデル（macOS: mlx / whisper-local、Windows: faster / whisper-local）で実行して `reports/poc_whisper_metrics.csv` を更新。
 
 ## パッケージング（macOS / Windows 共通の考え方）
 
@@ -205,7 +204,7 @@ python -m src.cli.main cleanup --days 3
 ### Windows 向け `.exe` パッケージ化の手順（概要）
 
 前提: Windows 10/11 64bit の開発環境で Python 3.10〜3.12 と `pyinstaller` が利用可能になっていること。
-（Whisper 用には `openai-whisper` を利用する想定）
+（文字起こしは Faster-Whisper をデフォルト想定）
 
 1. ブランチと依存を整える
 

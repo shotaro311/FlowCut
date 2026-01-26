@@ -48,7 +48,7 @@ def test_cli_run_simulate_generates_srt(monkeypatch, tmp_path: Path):
             "run",
             str(audio),
             "--models",
-            "openai",
+            "whisper-local",
             "--llm",
             "dummy",
             "--simulate",

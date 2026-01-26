@@ -36,9 +36,9 @@ def test_execute_poc_run_save_logs_writes_under_output_dir(tmp_path, monkeypatch
         save_logs=True,
         timestamp="20251215T000000",
     )
-    saved_paths = execute_poc_run([audio_path], ["mlx"], options)
+    saved_paths = execute_poc_run([audio_path], ["whisper-local"], options)
 
-    run_id = f"{audio_path.stem}_mlx_{options.timestamp}"
+    run_id = f"{audio_path.stem}_whisper-local_{options.timestamp}"
     run_dir = Path("output") / f"{audio_path.stem}_{options.timestamp}"
     assert (run_dir / f"{run_id}.srt").exists()
     assert (run_dir / "logs/poc_samples" / f"{run_id}.json").exists()

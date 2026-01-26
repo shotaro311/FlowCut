@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from pathlib import Path
 from typing import Any, Dict
 
@@ -229,29 +230,6 @@ class GuiConfig:
         self._config["pass5_max_chars"] = chars
         self.save_config()
 
-    def get_line_max_chars(self) -> int:
-        """字幕1行の最大文字数（12〜20）を取得する。"""
-        chars = self._config.get("line_max_chars", 17)
-        try:
-            value = int(chars)
-        except (TypeError, ValueError):
-            value = 17
-        if value < 12:
-            value = 12
-        if value > 20:
-            value = 20
-        return value
-
-    def set_line_max_chars(self, chars: int) -> None:
-        """字幕1行の最大文字数（12〜20）を保存する。"""
-        value = int(chars)
-        if value < 12:
-            value = 12
-        if value > 20:
-            value = 20
-        self._config["line_max_chars"] = value
-        self.save_config()
-
     def get_pass5_model(self) -> str | None:
         """Pass5（長行改行）のモデル名を取得する。"""
         model = self.get_pass_model("pass5", "").strip()
@@ -302,25 +280,11 @@ class GuiConfig:
         self._config["keep_extracted_audio"] = keep
         self.save_config()
 
-    # --- Whisperランナー設定 ---
-
-    def get_whisper_runner(self) -> str:
-        """Whisperランナーの設定を取得する。デフォルトは 'openai'。"""
-        runner = self._config.get("whisper_runner")
-        if isinstance(runner, str) and runner.strip():
-            return runner.strip().lower()
-        return "openai"  # デフォルトはopenai-whisper (local)
-
-    def set_whisper_runner(self, runner: str) -> None:
-        """Whisperランナーの設定を保存する。"""
-        self._config["whisper_runner"] = runner.strip().lower()
-        self.save_config()
-
     # --- ログ保存設定 ---
 
     def get_save_logs(self) -> bool:
         """ログを保存するかどうかを取得する。"""
-        return bool(self._config.get("save_logs", True))
+        return bool(self._config.get("save_logs", False))
 
     def set_save_logs(self, save: bool) -> None:
         """ログを保存するかどうかを保存する。"""
@@ -336,6 +300,24 @@ class GuiConfig:
     def set_notify_on_complete(self, notify: bool) -> None:
         """完了時に通知するかどうかを保存する。"""
         self._config["notify_on_complete"] = notify
+        self.save_config()
+
+    # --- 文字起こしランナー設定 ---
+
+    def get_transcribe_runner(self) -> str:
+        """文字起こしランナー（transcribe runner slug）を取得する。"""
+        raw = self._config.get("transcribe_runner")
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip().lower()
+        # 既定: macOS は mlx、その他は faster
+        return "mlx" if sys.platform == "darwin" else "faster"
+
+    def set_transcribe_runner(self, runner: str | None) -> None:
+        """文字起こしランナー（transcribe runner slug）を保存する。"""
+        if runner is None or not str(runner).strip():
+            self._config.pop("transcribe_runner", None)
+        else:
+            self._config["transcribe_runner"] = str(runner).strip().lower()
         self.save_config()
 
 

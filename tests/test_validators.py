@@ -78,15 +78,3 @@ def test_particle_line_with_sufficient_length():
     issues = detect_issues(lines, words)
     
     assert len(issues) == 0
-
-
-def test_detect_missing_coverage():
-    lines = [
-        LineRange(0, 2, "テストです"),
-        LineRange(4, 5, "欠番あり"),
-    ]
-    words = [WordTimestamp(word="a", start=0.0, end=0.1) for _ in range(6)]
-
-    issues = detect_issues(lines, words)
-
-    assert any(issue.type == "missing_coverage" for issue in issues)

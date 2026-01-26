@@ -19,6 +19,10 @@ logs/llm_raw/
 temp/progress/
 temp/poc_samples/
 
+# Bundled third-party binaries (keep local; fetch via scripts when needed)
+assets/ffmpeg/ffmpeg.exe
+assets/ffmpeg/licenses/
+
 
 
 # Virtual environments
@@ -43,7 +47,7 @@ logs/*.log
 logs/*.json
 temp/**/*.json
 temp/**/*.tmp
-output/**/*.srt
+output/
 samples/*.wav
 samples/*.m4a
 node_modules
@@ -53,4 +57,3 @@ node_modules
 
 # Sample files
 docs/sample
-

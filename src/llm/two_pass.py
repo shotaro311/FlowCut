@@ -1,4 +1,4 @@
-"""Two-pass LLM formatter (Pass1: replace/delete, Pass2: line splits by max_chars)."""
+"""Two-pass LLM formatter (Pass1: replace/delete, Pass2: 17-char line splits)."""
 from __future__ import annotations
 
 import json
@@ -15,7 +15,6 @@ from typing import List, Sequence, Dict, Any, Iterable, Callable
 from src.config import get_settings
 from src.llm.formatter import FormatterError, get_provider, FormatterRequest
 from src.llm.prompts import PromptPayload
-from src.llm.workflows.common import MAX_LINE_DURATION_SEC
 from src.llm.workflows.registry import get_workflow
 from src.transcribe.base import WordTimestamp
 from src.llm.usage_metrics import record_pass_time
@@ -23,24 +22,52 @@ from src.utils.glossary import DEFAULT_GLOSSARY_TERMS, normalize_glossary_terms
 
 logger = logging.getLogger(__name__)
 RAW_LOG_DIR = Path("logs/llm_raw")
-LINES_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "lines": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "from": {"type": "integer"},
-                    "to": {"type": "integer"},
-                    "text": {"type": "string"},
-                },
-                "required": ["from", "to", "text"],
+
+
+def _google_json_schema_for_pass(pass_label: str | None) -> Dict[str, Any] | None:
+    """Return a JSON Schema dict for Gemini structured output (when supported)."""
+    if not pass_label:
+        return None
+    if pass_label == "pass1":
+        return {
+            "type": "object",
+            "properties": {
+                "operations": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string", "enum": ["replace", "delete"]},
+                            "start_idx": {"type": "integer"},
+                            "end_idx": {"type": "integer"},
+                            "text": {"type": "string"},
+                        },
+                        "required": ["type", "start_idx", "end_idx"],
+                    },
+                }
             },
-        },
-    },
-    "required": ["lines"],
-}
+            "required": ["operations"],
+        }
+    if pass_label in {"pass2", "pass3", "pass4", "pass2to4"}:
+        return {
+            "type": "object",
+            "properties": {
+                "lines": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "from": {"type": "integer"},
+                            "to": {"type": "integer"},
+                            "text": {"type": "string"},
+                        },
+                        "required": ["from", "to", "text"],
+                    },
+                }
+            },
+            "required": ["lines"],
+        }
+    return None
 
 
 @dataclass(slots=True)
@@ -70,18 +97,42 @@ class TwoPassResult:
 
 
 def _extract_json(text: str) -> Any:
-    """Extract JSON object/array from an LLM response, tolerating code fences."""
-    # Remove code fences if present
-    fenced = re.search(r"```(?:json)?\s*(\{.*\}|\[.*\])\s*```", text, re.DOTALL)
+    """Extract the first JSON object/array from an LLM response.
+
+    - Code fences (```json ... ```) are tolerated.
+    - Leading/trailing non-JSON text is tolerated.
+    """
+    if not isinstance(text, str):
+        raise TypeError("text must be str")
+
+    # Remove code fences if present (keep the inside as-is; we will decode the first JSON)
+    fenced = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.IGNORECASE)
     if fenced:
         text = fenced.group(1)
-    # Find first JSON-like substring
-    brace = text.find("{")
-    bracket = text.find("[")
-    start = min([p for p in [brace, bracket] if p != -1], default=-1)
-    if start > 0:
-        text = text[start:]
-    return json.loads(text)
+
+    stripped = text.strip()
+    if not stripped:
+        raise ValueError("LLM 応答が空です")
+
+    decoder = json.JSONDecoder()
+
+    # Prefer the first '{' or '[' if present, but allow for any later JSON fragment.
+    candidate_starts = [idx for idx, ch in enumerate(text) if ch in "{["]
+    if not candidate_starts:
+        preview = stripped.replace("\r", " ").replace("\n", " ")
+        raise ValueError(f"JSONが見つかりません（先頭）: {preview[:200]}")
+
+    last_error: Exception | None = None
+    for start in candidate_starts:
+        try:
+            fragment = text[start:].lstrip()
+            parsed, _ = decoder.raw_decode(fragment)
+            return parsed
+        except Exception as exc:
+            last_error = exc
+            continue
+
+    raise ValueError(f"JSONの抽出に失敗しました: {last_error}") from last_error
 
 
 def _log_raw_response(pass_label: str, raw: str) -> None:
@@ -318,67 +369,6 @@ def _has_contiguous_prefix_coverage(lines: Sequence["LineRange"], n_words: int) 
     return True
 
 
-def _try_normalize_lines_for_coverage(
-    lines: Sequence["LineRange"],
-    n_words: int,
-    *,
-    require_full_coverage: bool,
-) -> tuple[List["LineRange"], str] | None:
-    """
-    LLM が返す from/to の典型的なズレ（1-based / end-exclusive / 最終 to=n_words）を
-    安全に補正できる場合だけ正規化する。
-    """
-    if not lines or n_words <= 0:
-        return None
-
-    check_fn = _has_contiguous_word_coverage if require_full_coverage else _has_contiguous_prefix_coverage
-    ordered = sorted(lines, key=lambda l: (l.start_idx, l.end_idx))
-
-    def _sorted(candidate: Sequence["LineRange"]) -> List["LineRange"]:
-        return sorted(candidate, key=lambda l: (l.start_idx, l.end_idx))
-
-    def _shift(candidate: Sequence["LineRange"], *, start_delta: int, end_delta: int) -> List["LineRange"]:
-        return _sorted(
-            [
-                LineRange(start_idx=l.start_idx + start_delta, end_idx=l.end_idx + end_delta, text=l.text)
-                for l in candidate
-            ]
-        )
-
-    # 1) last to == n_words (off-by-one) を疑う
-    max_end = max(l.end_idx for l in ordered)
-    if max_end == n_words and all(l.end_idx <= n_words for l in ordered):
-        clamped = _sorted(
-            [
-                LineRange(
-                    start_idx=l.start_idx,
-                    end_idx=(n_words - 1) if l.end_idx == n_words else l.end_idx,
-                    text=l.text,
-                )
-                for l in ordered
-            ]
-        )
-        if check_fn(clamped, n_words):
-            return clamped, "clamp_end"
-
-    # 2) end-exclusive（[from, to)）を疑う
-    end_exclusive = _shift(ordered, start_delta=0, end_delta=-1)
-    if check_fn(end_exclusive, n_words):
-        return end_exclusive, "end_exclusive"
-
-    # 3) 1-based inclusive を疑う
-    one_based = _shift(ordered, start_delta=-1, end_delta=-1)
-    if check_fn(one_based, n_words):
-        return one_based, "one_based"
-
-    # 4) 1-based & end-exclusive（[from, to)）を疑う
-    one_based_end_exclusive = _shift(ordered, start_delta=-1, end_delta=-2)
-    if check_fn(one_based_end_exclusive, n_words):
-        return one_based_end_exclusive, "one_based_end_exclusive"
-
-    return None
-
-
 def _has_same_line_ranges(before: Sequence["LineRange"], after: Sequence["LineRange"]) -> bool:
     """Return True if line ranges (from/to) are identical and in the same order."""
     if len(before) != len(after):
@@ -401,7 +391,7 @@ class TwoPassFormatter:
         pass2_model: str | None = None,
         pass3_model: str | None = None,
         pass4_model: str | None = None,
-        workflow: str = "workflow1",
+        workflow: str = "workflow2",
         glossary_terms: Sequence[str] | None = None,
         *,
         run_id: str | None = None,
@@ -452,7 +442,6 @@ class TwoPassFormatter:
         # テロップ開始時間遅延（秒）。2番目以降のセグメントのstartをこの秒数だけ遅らせる。
         # 最初のセグメントのstartと最後のセグメントのendは維持される。
         self.start_delay = start_delay
-        self._current_line_max_chars = 17
 
     # --- logging helpers -------------------------------------------------
 
@@ -497,6 +486,13 @@ class TwoPassFormatter:
                 metadata["anthropic_model"] = model_override
             else:
                 metadata["model"] = model_override
+        if self.provider_slug == "google":
+            # Gemini structured output: request JSON for two-pass prompts.
+            # If unsupported by the selected model, provider will fall back to plain text mode.
+            metadata["google_response_mime_type"] = "application/json"
+            schema = _google_json_schema_for_pass(pass_label)
+            if schema is not None:
+                metadata["google_response_json_schema"] = schema
         # run_id / source_name / pass_label をメタデータに載せておくと、
         # プロバイダー側でトークン使用量をパス別に集計できる。
         if self.run_id:
@@ -505,21 +501,13 @@ class TwoPassFormatter:
             metadata["source_name"] = self.source_name
         if pass_label:
             metadata["pass_label"] = pass_label
-        if (
-            pass_label in {"pass2", "pass3", "pass4"}
-            and self.provider_slug in {"google", "openai"}
-            and self.workflow == "workflow2"
-        ):
-            metadata["structured_output_mime_type"] = "application/json"
-            metadata["structured_output_schema"] = LINES_SCHEMA
-            metadata["structured_output_name"] = f"{pass_label}_lines"
         
         req = FormatterRequest(
             block_text="",
             provider=self.provider_slug,
             rewrite=False,
             metadata=metadata,
-            line_max_chars=float(getattr(self, "_current_line_max_chars", 17)),
+            line_max_chars=17.0,
             max_retries=1,
             temperature=self.temperature,
             timeout=self.timeout,
@@ -537,14 +525,6 @@ class TwoPassFormatter:
     ) -> TwoPassResult | None:
         if not words:
             raise FormatterError("wordタイムスタンプが空です")
-        try:
-            max_chars_int = int(max_chars)
-        except (TypeError, ValueError):
-            max_chars_int = 17
-        if max_chars_int <= 0:
-            max_chars_int = 17
-        self._current_line_max_chars = max_chars_int
-        max_chars = float(max_chars_int)
         try:
             logger.info("two-pass: pass1 start (words=%d, provider=%s)", len(words), self.provider_slug)
             # Pass1: replace/delete only
@@ -634,15 +614,7 @@ class TwoPassFormatter:
                     if any(len(line.text) < 5 or len(line.text) > int(max_chars) for line in combined_lines):
                         raise FormatterError("統合結果に文字数違反の行があります")
                     if not _has_contiguous_word_coverage(combined_lines, len(updated_words)):
-                        normalized = _try_normalize_lines_for_coverage(
-                            combined_lines,
-                            len(updated_words),
-                            require_full_coverage=True,
-                        )
-                        if normalized is None:
-                            raise FormatterError("統合結果の範囲（from/to）が不正です")
-                        combined_lines, reason = normalized
-                        logger.warning("pass2to4: normalized line ranges (%s)", reason)
+                        raise FormatterError("統合結果の範囲（from/to）が不正です")
 
                     issues = detect_issues(combined_lines, updated_words)
                     if issues:
@@ -675,114 +647,69 @@ class TwoPassFormatter:
             lines = _parse_lines(parsed2)
             if not lines:
                 raise FormatterError("行分割結果が空です")
-
             lines = sorted(lines, key=lambda l: (l.start_idx, l.end_idx))
             if not _has_contiguous_prefix_coverage(lines, len(updated_words)):
-                normalized = _try_normalize_lines_for_coverage(
-                    lines,
-                    len(updated_words),
-                    require_full_coverage=False,
-                )
-                if normalized is None:
-                    if self.workflow in ("workflow2", "workflow3"):
-                        logger.warning("pass2: invalid line coverage; proceeding to pass3")
-                    else:
-                        raise FormatterError("行分割結果の範囲（from/to）が不正です")
-                else:
-                    lines, reason = normalized
-                    logger.warning("pass2: normalized line ranges (%s)", reason)
+                raise FormatterError("行分割結果の範囲（from/to）が不正です")
             pass2_lines = lines
 
-            # Pass3: Validation + optional correction
+            # Pass3: Validation (now always executed)
             from src.llm.validators import detect_issues
+            if not enable_pass3:
+                logger.warning("enable_pass3=False は非推奨になりました。Pass3は常に実行されます。")
 
             issues = detect_issues(lines, updated_words)
-            if not self.workflow_def.pass3_enabled:
-                if issues:
-                    logger.info("two-pass: pass3 skipped (pass3_disabled, issues=%d)", len(issues))
-                    for issue in issues:
-                        logger.debug("  - %s", issue.description)
-                else:
-                    logger.info("two-pass: pass3 skipped (pass3_disabled)")
-            else:
-                if not enable_pass3:
-                    logger.warning("enable_pass3=False は非推奨になりました。Pass3は常に実行されます。")
+            logger.info("two-pass: pass3 start (%d issues detected)", len(issues))
+            for issue in issues:
+                logger.debug("  - %s", issue.description)
 
-                logger.info("two-pass: pass3 start (%d issues detected)", len(issues))
-                for issue in issues:
-                    logger.debug("  - %s", issue.description)
-
-                if progress_callback:
-                    progress_callback("LLM Pass 3", 80)
-                pass3_prompt = self._build_pass3_prompt(lines, updated_words, issues)
-                logger.debug("Calling LLM for Pass 3. Prompt length: %d", len(pass3_prompt))
-                t_p3_start = time.perf_counter()
-                raw3, parsed3 = _call_llm_with_parse(
-                    self._call_llm,
-                    pass_label="pass3",
-                    prompt=pass3_prompt,
-                    model_override=self.pass3_model,
-                    retries=2,
-                    soft_fail=True,
-                    log_sink=self,
-                )
-                t_p3_end = time.perf_counter()
-                record_pass_time(self.run_id, "pass3", t_p3_end - t_p3_start)
-                if parsed3:
-                    pass3_lines = _parse_lines(parsed3)
-                    pass3_lines = sorted(pass3_lines, key=lambda l: (l.start_idx, l.end_idx))
-                    if pass3_lines and not _has_contiguous_word_coverage(pass3_lines, len(updated_words)):
-                        normalized = _try_normalize_lines_for_coverage(
-                            pass3_lines,
-                            len(updated_words),
-                            require_full_coverage=True,
-                        )
-                        if normalized is not None:
-                            pass3_lines, reason = normalized
-                            logger.warning("pass3: normalized line ranges (%s)", reason)
-
-                    if pass3_lines and _has_contiguous_word_coverage(pass3_lines, len(updated_words)):
-                        if (
-                            not self.workflow_def.allow_pass3_range_change
-                            and not _has_same_line_ranges(pass2_lines, pass3_lines)
-                        ):
-                            logger.warning("Pass 3 changed line ranges; using Pass 2 output instead")
-                        else:
-                            lines = pass3_lines
-                    elif pass3_lines:
-                        logger.warning(
-                            "Pass 3 returned invalid coverage (words=%d, lines=%d); using Pass 2 output instead",
-                            len(updated_words),
-                            len(pass3_lines),
-                        )
+            if progress_callback:
+                progress_callback("LLM Pass 3", 80)
+            pass3_prompt = self._build_pass3_prompt(lines, updated_words, issues)
+            logger.debug("Calling LLM for Pass 3. Prompt length: %d", len(pass3_prompt))
+            t_p3_start = time.perf_counter()
+            raw3, parsed3 = _call_llm_with_parse(
+                self._call_llm,
+                pass_label="pass3",
+                prompt=pass3_prompt,
+                model_override=self.pass3_model,
+                retries=2,
+                soft_fail=True,
+                log_sink=self,
+            )
+            t_p3_end = time.perf_counter()
+            record_pass_time(self.run_id, "pass3", t_p3_end - t_p3_start)
+            if parsed3:
+                pass3_lines = _parse_lines(parsed3)
+                pass3_lines = sorted(pass3_lines, key=lambda l: (l.start_idx, l.end_idx))
+                if pass3_lines and _has_contiguous_word_coverage(pass3_lines, len(updated_words)):
+                    if (
+                        not self.workflow_def.allow_pass3_range_change
+                        and not _has_same_line_ranges(pass2_lines, pass3_lines)
+                    ):
+                        logger.warning("Pass 3 changed line ranges; using Pass 2 output instead")
                     else:
-                        logger.warning("Pass 3 returned empty lines, using Pass 2 output")
+                        lines = pass3_lines
+                elif pass3_lines:
+                    logger.warning(
+                        "Pass 3 returned invalid coverage (words=%d, lines=%d); using Pass 2 output instead",
+                        len(updated_words),
+                        len(pass3_lines),
+                    )
                 else:
-                    logger.warning("Pass 3 parsing failed; using Pass 2 output")
+                    logger.warning("Pass 3 returned empty lines, using Pass 2 output")
+            else:
+                logger.warning("Pass 3 parsing failed; using Pass 2 output")
 
-            # Pass4: re-run lines that violate length or duration bounds
+            # Pass4: re-run only lines that violate length bounds
             fixed_lines: List[LineRange] = []
-            pass4_needed = any(self._needs_pass4(line, updated_words) for line in lines)
+            pass4_needed = any(self._needs_pass4(line) for line in lines)
             if pass4_needed and progress_callback:
                 progress_callback("LLM Pass 4", 95)
-            max_chars = getattr(self, "_current_line_max_chars", 17)
             for line in lines:
-                length_issue = len(line.text) > max_chars or len(line.text) < 5
-                duration = self._line_duration_seconds(line, updated_words)
-                duration_issue = duration is not None and duration > MAX_LINE_DURATION_SEC
-                if length_issue or duration_issue:
-                    detail = []
-                    if length_issue:
-                        detail.append(f"len={len(line.text)}")
-                    if duration_issue:
-                        detail.append(f"duration={duration:.2f}s")
-                    logger.info("pass4: line needs retry (%s)", ", ".join(detail))
+                if self._needs_pass4(line):
+                    logger.info("pass4: line length %d out of bounds, retrying LLM", len(line.text))
                     t_p4_start = time.perf_counter()
-                    repl = self._run_pass4_fix(
-                        line,
-                        updated_words,
-                        enforce_duration=duration_issue,
-                    )
+                    repl = self._run_pass4_fix(line, updated_words)
                     t_p4_end = time.perf_counter()
                     record_pass_time(self.run_id, "pass4", t_p4_end - t_p4_start)
                     fixed_lines.extend(repl)
@@ -807,6 +734,7 @@ class TwoPassFormatter:
         from src.alignment.srt import SubtitleSegment
 
         segments: List[SubtitleSegment] = []
+        last_end_time = 0.0
 
         # LLM が返す lines の順序は必ずしも時系列（start_idx順）とは限らないため、
         # タイムコード生成前に安定した順序へ正規化する。
@@ -821,24 +749,19 @@ class TwoPassFormatter:
             start = words[line.start_idx].start or 0.0
             end = words[line.end_idx].end or start
 
+            # タイムスタンプの巻き戻りだけはローカルで補正する
+            if start < last_end_time:
+                logger.warning(
+                    "Timestamp backward jump detected (clamped): %.2f -> %.2f", start, last_end_time
+                )
+                start = last_end_time
+
             # end < start になってしまった場合の最小補正
             if end < start:
                 end = start + 0.1
 
             segments.append(SubtitleSegment(index=0, start=start, end=end, text=current_text))
-
-        # 重複解消: 前のセグメントのendを現在のstartに制限することで、
-        # ワードのタイムスタンプを優先し、ドリフトの蓄積を防ぐ
-        for i in range(1, len(segments)):
-            prev_seg = segments[i - 1]
-            curr_seg = segments[i]
-            if prev_seg.end > curr_seg.start:
-                logger.debug(
-                    "Overlap detected: adjusting prev.end %.2f -> %.2f",
-                    prev_seg.end,
-                    curr_seg.start,
-                )
-                prev_seg.end = curr_seg.start
+            last_end_time = end
 
         # セグメント間の「タイムコードの空白時間」を埋めるため、
         # 次のセグメントの開始時刻まで前のセグメントの end を延長する。
@@ -955,7 +878,6 @@ class TwoPassFormatter:
         if not lines or not words:
             return list(lines)
 
-        max_chars = getattr(self, "_current_line_max_chars", 17)
         max_idx = len(words) - 1
         # lines のうち、最も大きい end_idx を持つものを取得
         last_line = max(lines, key=lambda l: l.end_idx)
@@ -976,20 +898,20 @@ class TwoPassFormatter:
             text_parts: List[str] = []
             current_len = 0
 
-            # 最低 1 つは単語を含める & 目安の文字数で分割（既存仕様を緩く模倣）
+            # 最低 1 つは単語を含める & 17 文字程度を目安に分割（既存仕様を緩く模倣）
             while idx <= max_idx:
                 word = words[idx].word or ""
                 # 日本語前提のため、ここでは単純に連結（スペースは挿入しない）
                 next_len = current_len + len(word)
-                # すでにある程度の長さがあり、これ以上繋ぐと文字数を超える場合は改行
-                if text_parts and next_len > max_chars and current_len >= 5:
+                # すでにある程度の長さがあり、これ以上繋ぐと 17 文字を大きく超える場合は改行
+                if text_parts and next_len > 17 and current_len >= 5:
                     break
                 text_parts.append(word)
                 current_len = next_len
                 idx += 1
 
                 # ちょうど良い長さになったら一旦区切る
-                if current_len >= 10 and (idx > max_idx or current_len >= max_chars):
+                if current_len >= 10 and (idx > max_idx or current_len >= 17):
                     break
 
             line_end = idx - 1
@@ -1012,7 +934,7 @@ class TwoPassFormatter:
     def _build_pass1_prompt(self, raw_text: str, words: Sequence[WordTimestamp]) -> str:
         if self.workflow_def.pass1_prompt is None:
             raise FormatterError(f"未設定のワークフローです: {self.workflow}")
-        return self.workflow_def.pass1_prompt(raw_text, words, self.glossary_terms)
+        return self.workflow_def.pass1_prompt(raw_text, words)
 
     def _build_pass2_prompt(self, words: Sequence[WordTimestamp], *, max_chars: float) -> str:
         if self.workflow_def.pass2_prompt is None:
@@ -1024,39 +946,15 @@ class TwoPassFormatter:
             raise FormatterError(f"未設定のワークフローです: {self.workflow}")
         return self.workflow_def.pass3_prompt(lines, words, issues, self.glossary_terms)
 
-    def _line_duration_seconds(
-        self,
-        line: LineRange,
-        words: Sequence[WordTimestamp],
-    ) -> float | None:
-        if line.start_idx < 0 or line.end_idx >= len(words):
-            return None
-        start = getattr(words[line.start_idx], "start", None)
-        end = getattr(words[line.end_idx], "end", None)
-        try:
-            return float(end) - float(start)
-        except (TypeError, ValueError):
-            return None
-
-    def _needs_pass4(self, line: LineRange, words: Sequence[WordTimestamp]) -> bool:
-        max_chars = getattr(self, "_current_line_max_chars", 17)
-        if len(line.text) > max_chars or len(line.text) < 5:
-            return True
-        duration = self._line_duration_seconds(line, words)
-        return duration is not None and duration > MAX_LINE_DURATION_SEC
+    def _needs_pass4(self, line: LineRange) -> bool:
+        return len(line.text) > 17 or len(line.text) < 5
 
     def _build_pass4_prompt(self, line: LineRange, words: Sequence[WordTimestamp]) -> str:
         if self.workflow_def.pass4_prompt is None:
             raise FormatterError(f"未設定のワークフローです: {self.workflow}")
-        return self.workflow_def.pass4_prompt(line, words, getattr(self, "_current_line_max_chars", 17))
+        return self.workflow_def.pass4_prompt(line, words)
 
-    def _run_pass4_fix(
-        self,
-        line: LineRange,
-        words: Sequence[WordTimestamp],
-        *,
-        enforce_duration: bool = False,
-    ) -> List[LineRange]:
+    def _run_pass4_fix(self, line: LineRange, words: Sequence[WordTimestamp]) -> List[LineRange]:
         prompt = self._build_pass4_prompt(line, words)
         raw, parsed = _call_llm_with_parse(
             self._call_llm,
@@ -1071,12 +969,7 @@ class TwoPassFormatter:
             repl = _parse_lines(parsed)
             if repl:
                 repl = sorted(repl, key=lambda l: (l.start_idx, l.end_idx))
-                if self._is_valid_pass4_replacement(
-                    line,
-                    repl,
-                    words,
-                    enforce_duration=enforce_duration,
-                ):
+                if self._is_valid_pass4_replacement(line, repl):
                     return repl
                 logger.warning(
                     "pass4 returned invalid ranges; keeping original line (%d-%d)",
@@ -1086,19 +979,10 @@ class TwoPassFormatter:
         logger.warning("pass4 failed or empty; keeping original line (%d-%d)", line.start_idx, line.end_idx)
         return [line]
 
-    def _is_valid_pass4_replacement(
-        self,
-        original: LineRange,
-        repl: Sequence[LineRange],
-        words: Sequence[WordTimestamp],
-        *,
-        enforce_duration: bool = False,
-    ) -> bool:
+    def _is_valid_pass4_replacement(self, original: LineRange, repl: Sequence[LineRange]) -> bool:
         if not repl:
             return False
-        max_chars = getattr(self, "_current_line_max_chars", 17)
         prev_end = original.start_idx - 1
-        durations: List[float | None] = []
         for line in repl:
             if line.start_idx < original.start_idx or line.end_idx > original.end_idx:
                 return False
@@ -1106,17 +990,10 @@ class TwoPassFormatter:
                 return False
             if line.start_idx > line.end_idx:
                 return False
-            if len(line.text) < 5 or len(line.text) > max_chars:
+            if len(line.text) < 5 or len(line.text) > 17:
                 return False
-            if enforce_duration:
-                durations.append(self._line_duration_seconds(line, words))
             prev_end = line.end_idx
-        if prev_end != original.end_idx:
-            return False
-        if enforce_duration and durations and all(d is not None for d in durations):
-            if any(d > MAX_LINE_DURATION_SEC for d in durations):
-                return False
-        return True
+        return prev_end == original.end_idx
 
 
 __all__ = ["TwoPassFormatter", "TwoPassResult"]

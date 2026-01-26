@@ -35,10 +35,10 @@ def test_summarize_file_reads_metadata(tmp_path):
         "text": "テスト",
         "words": [{"word": "テスト"}],
         "blocks": [{"text": "テスト", "duration": 0, "sentences": []}],
-        "metadata": {"model": "kotoba", "audio_file": "samples/test.wav"},
+        "metadata": {"model": "whisper-local", "audio_file": "samples/test.wav"},
     }
     path = tmp_path / "sample.json"
     path.write_text(json.dumps(payload, ensure_ascii=False))
     record = summarize_file(path, char_limit=1200, duration_limit=30)
-    assert record["model"] == "kotoba"
+    assert record["model"] == "whisper-local"
     assert record["num_blocks"] == 1
