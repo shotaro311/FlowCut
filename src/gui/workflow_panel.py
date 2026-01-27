@@ -10,7 +10,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from src.config.settings import get_settings
 from src.llm.profiles import get_profile, list_models_by_provider, reload_profiles
-from src.llm.workflows.registry import get_workflow, list_workflows
+from src.llm.workflows.registry import get_workflow
 from src.gui.config import get_config
 
 
@@ -46,7 +46,7 @@ class WorkflowPanel(ttk.Frame):
         self.whisper_runner_var = tk.StringVar(value="openai")
 
         # LLM関連変数
-        self.workflow_var = tk.StringVar(value="workflow2")
+        self.workflow_slug = "workflow2"
         self.pass1_model_var = tk.StringVar()
         self.pass2_model_var = tk.StringVar()
         self.pass3_model_var = tk.StringVar()
@@ -142,26 +142,6 @@ class WorkflowPanel(ttk.Frame):
         # LLMオプション
         options_frame = ttk.LabelFrame(self, text="LLMオプション")
         options_frame.pack(fill=tk.X, pady=(0, 8))
-
-        # ワークフロー選択
-        workflow_row = ttk.Frame(options_frame)
-        workflow_row.pack(fill=tk.X, pady=(4, 2))
-        ttk.Label(workflow_row, text="ワークフロー:").pack(side=tk.LEFT)
-        workflow_options = [wf.slug for wf in list_workflows()]
-        workflow_combo = ttk.Combobox(
-            workflow_row,
-            textvariable=self.workflow_var,
-            values=workflow_options,
-            state="readonly",
-            width=16,
-        )
-        workflow_combo.pack(side=tk.LEFT, padx=(4, 0))
-        workflow_combo.bind("<<ComboboxSelected>>", self._on_workflow_changed)
-        ttk.Label(
-            workflow_row,
-            text="workflow2: 標準（分割並列）",
-            foreground="#888888",
-        ).pack(side=tk.LEFT, padx=(8, 0))
 
         # 1行の最大文字数（全ワークフロー共通）
         max_chars_row = ttk.Frame(options_frame)
@@ -331,8 +311,6 @@ class WorkflowPanel(ttk.Frame):
         else:
             self.whisper_runner_var.set("openai")
         self._update_whisper_desc_label()
-
-        self.workflow_var.set(self.config.get_workflow())
 
         all_models = set(self._get_all_models())
         saved_pass1 = self.config.get_pass_model("pass1", "").strip()
@@ -570,7 +548,7 @@ class WorkflowPanel(ttk.Frame):
             whisper_runner=self.whisper_runner_var.get(),
             llm_provider=provider,
             llm_profile=None,
-            workflow=self.workflow_var.get() or "workflow2",
+            workflow=self.workflow_slug,
             pass1_model=self.pass1_model_var.get().strip() or None,
             pass2_model=self.pass2_model_var.get().strip() or None,
             pass3_model=self.pass3_model_var.get().strip() or None,
@@ -789,10 +767,6 @@ class WorkflowPanel(ttk.Frame):
         desc = self._whisper_runner_labels.get(runner, "")
         self._whisper_desc_label.configure(text=desc)
 
-    def _on_workflow_changed(self, _event: object) -> None:
-        self.config.set_workflow(self.workflow_var.get())
-        self._render_advanced_pass_models()
-
     def _on_start_delay_changed(self, _event: object) -> None:
         self.config.set_start_delay(self._get_start_delay())
 
@@ -857,11 +831,11 @@ class WorkflowPanel(ttk.Frame):
         return sorted(models)[0]
 
     def _get_active_pass_names(self) -> list[str]:
-        wf = get_workflow(self.workflow_var.get())
+        wf = get_workflow(self.workflow_slug)
         return wf.active_pass_model_keys()
 
     def _sync_pass_models_to_provider(self, provider: str) -> None:
-        wf = get_workflow(self.workflow_var.get())
+        wf = get_workflow(self.workflow_slug)
         mapping: dict[str, tk.StringVar] = {
             "pass1": self.pass1_model_var,
             "pass2": self.pass2_model_var,
@@ -956,7 +930,7 @@ class WorkflowPanel(ttk.Frame):
             child.destroy()
         self._pass_model_combos = []
 
-        wf = get_workflow(self.workflow_var.get())
+        wf = get_workflow(self.workflow_slug)
         if wf.is_two_call_mode():
             rows = [
                 ("Pass1:", "pass1", self.pass1_model_var),
