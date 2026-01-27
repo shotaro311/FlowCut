@@ -43,6 +43,7 @@ logs/*.log
 logs/*.json
 temp/**/*.json
 temp/**/*.tmp
+output/
 output/**/*.srt
 samples/*.wav
 samples/*.m4a
@@ -53,4 +54,3 @@ node_modules
 
 # Sample files
 docs/sample
-
