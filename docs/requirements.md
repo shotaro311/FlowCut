@@ -29,7 +29,7 @@
 
 以下のプロバイダーから選択可能。**Plan推奨デフォルトは Google (gemini-3-pro-preview = Gemini 3.0 Pro)**、ただし **Pass3 のみ gemini-2.5-flash** でコスト最適化。  
 環境変数 `LLM_PASS1_MODEL` / `LLM_PASS2_MODEL` / `LLM_PASS3_MODEL` で各パスのモデルを自由に上書き可能（例: `gpt-5.1`, `claude-sonnet-4-20250514`）。プロバイダー指定は `--llm` で行い、モデル名は文字列そのまま渡せる。
-また、workflow2 / workflow3 は `LLM_WF{2|3}_PASS{1..4}_MODEL` でワークフロー別に上書き可能（未設定なら `LLM_PASS{n}_MODEL` を使用）。
+また、workflow2 は `LLM_WF2_PASS{1..4}_MODEL` でワークフロー別に上書き可能（未設定なら `LLM_PASS{n}_MODEL` を使用）。
 ※ CLIでは `--llm` を明示指定しない限り整形とSRT生成は実行されず、文字起こしJSONのみ保存される。  
 ※ **三段階LLMワークフロー（Three-Pass）** を採用し、全文をLLMに渡して意味的改行および最終検証を実施。
 
@@ -66,15 +66,11 @@ LLM_PASS1_MODEL=gemini-3-pro-preview
 LLM_PASS2_MODEL=gemini-3-pro-preview
 LLM_PASS3_MODEL=gemini-2.5-flash
 LLM_PASS4_MODEL=gemini-2.5-flash  # 省略時は LLM_PASS3_MODEL を再利用
-# workflow別のモデル上書き（任意 / workflow2=WF2, workflow3=WF3）
+# workflow別のモデル上書き（任意 / workflow2=WF2）
 LLM_WF2_PASS1_MODEL=gemini-3-pro-preview
 LLM_WF2_PASS2_MODEL=gemini-3-pro-preview
 LLM_WF2_PASS3_MODEL=gemini-2.5-flash
 LLM_WF2_PASS4_MODEL=gemini-2.5-flash
-LLM_WF3_PASS1_MODEL=gemini-3-pro-preview
-LLM_WF3_PASS2_MODEL=gemini-3-pro-preview
-LLM_WF3_PASS3_MODEL=gemini-2.5-flash
-LLM_WF3_PASS4_MODEL=gemini-2.5-flash
 # Anthropic Claude
 ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxx
 ANTHROPIC_MODEL=claude-sonnet-4-20250514
@@ -175,25 +171,22 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
 * **採用方針：二段階＋検証ワークフロー**（TwoPassFormatter + Pass3/Pass4）: `docs/specs/llm_two_pass_workflow.md` 参照  
   * **パス1 (Text Cleaning):** 置換・削除のみ（挿入禁止）で誤字・フィラー除去。単語インデックス指定のJSONを返す。  
   * **パス2 (Line Splitting):** 17文字分割のみを決める。行範囲をインデックスで返す。  
-* **workflow2（分割並列）:** workflow1と同じプロンプト/検証フローで実行するが、長尺音声は単語タイムスタンプを約5分単位で分割し（できるだけ無音ギャップで境界を切る）、チャンクごとにPass1-4を実行して最後に統合する（最大10並列）。Pass2/Pass3はStructured Output（JSON Schema）で出力を要求し、範囲の欠落を減らす。欠落が発生した場合はPass3に補完指示を渡す。  
+* **workflow2（分割並列）:** 標準のプロンプト/検証フローで実行する。長尺音声は単語タイムスタンプを約5分単位で分割し（できるだけ無音ギャップで境界を切る）、チャンクごとにPass1-4を実行して最後に統合する（最大10並列）。Pass2/Pass3はStructured Output（JSON Schema）で出力を要求し、範囲の欠落を減らす。欠落が発生した場合はPass3に補完指示を渡す。  
   * **長尺行の再分割:** 1行の時間幅が10秒を超える場合はPass4で該当行のみ再分割し、wordタイムスタンプ基準で時間幅を抑える。  
   * **ギャップ埋め上限:** workflow2のSRTギャップ埋めは10秒を上限にする（長尺固定表示の抑制）。  
   * **Structured Output:** workflow2のPass4もStructured Output（JSON Schema）を利用する。  
   * **時間計算:** ローカルで行い、Whisperのwordタイムスタンプを維持する（尺伸び防止）。  
   * **タイムスタンプ補正 (Clamping):** LLMのインデックス指定ミスによる時間の巻き戻りを検知し、強制的に時系列順に補正する。  
 * **Pass3（検証＋校正）:** 問題がなくても最終確認のため実行する。  
-  * workflow1: 短行（1〜4文字）や引用分割の修正を行う（必要に応じて行範囲を調整）。  
-  * workflow2: workflow1と同等（必要に応じて行範囲を調整）。  
-  * workflow3: カスタム用。ここを書き換えると workflow3 にだけ反映される（必要なら行範囲の調整も許可）。  
+  * 短行（1〜4文字）や引用分割の修正を行う（必要に応じて行範囲の調整も許可）。  
   * Pass3 は行の時間幅も確認し、**1行が長時間（例: 10秒超）になる場合は分割**する。  
   * **Pass4（長さ違反行のみ再LLM）:** Pass3後に5文字未満/17文字超の行だけを再度LLMにかけ直す。出力が空/不正の場合は元行を維持し、Pass4 の段階で出力された `lines` をそのまま採用する（Pass4 後にローカルでの強制再分割は行わない）。  
   * **末尾カバレッジ保証（プロバイダ差異の吸収）:** 一部プロバイダ（特に OpenAI）では、Pass2/Pass3 の `lines` が先頭側に偏り、末尾の単語に対応する行が生成されないケースがある。この場合は TwoPassFormatter 内のフォールバック（`_ensure_trailing_coverage`）により、未カバーの単語から簡易な行を自動生成し、**常に文字起こし全文がSRTに反映される**ようにする。
   * **Pass5（オプション）:** SRT生成後の後処理として、指定文字数を超える長行のみLLMで改行する（タイムコードは変更しない）。
 * **ワークフロー定義（独立設計）**
-  * `src/llm/workflows/` 配下に workflow ごとのプロンプトと挙動を定義する（`workflow1.py` / `workflow2.py` / `workflow3.py`）。
-  * GUI/CLI は `workflow1|2|3` を選択して実行する。
-  * workflow ファイルを削除しても他の workflow に影響しない（不明な workflow が指定された場合は workflow1 にフォールバック）。
-  * workflow3 は実験的に **LLM呼び出しを2回（Pass1 + Pass2-4統合）**で動かせる（品質条件を満たさない場合は従来フローへフォールバック）。
+  * `src/llm/workflows/workflow2.py` に workflow2 のプロンプトと挙動を定義する。
+  * GUI/CLI は workflow2 を実行する（選択肢は workflow2 のみ）。
+  * 不明な workflow（例: 旧 `workflow1` / `workflow3`）が指定された場合も workflow2 にフォールバックする（後方互換）。
 * **プロンプトの役割（two-pass）:**
     1. パス1: 置換/削除のみを operations 配列(JSON)で返す。挿入禁止・順序を変えない。
     2. パス2: 17文字以内の自然な行分割を `{"lines":[{"from":0,"to":10,"text":"..."}]}` 形式で返す。
@@ -334,7 +327,7 @@ python -m src.cli.main run samples/sample_audio.m4a --llm anthropic --rewrite
     * Pass1 のモデルからプロバイダーを自動判定し、他の Pass は同じプロバイダーのモデルを選ぶ（Pass1変更で自動で揃う）。
   * [x] **詳細モード（上級者向け）**  
     * GUI上の折りたたみセクションで、Pass のモデル名を **プルダウン（Combobox）** から個別に選択できる。  
-    * workflow3 は実験的に `Pass2-4` を統合しているため、詳細設定も `Pass2-4` のモデル設定のみ表示される。
+    * ワークフローは workflow2 のみのため、詳細設定では Pass1〜Pass4（+Pass5有効時）のモデル設定を表示する。
   * [x] **Pass5（長行改行）**  
     * 指定文字数を超える長行のみを後処理で改行する（タイムコードは変更しない）。  
     * 文字数（例: 17）と、（必要なら）使用モデルを指定できる（プロバイダーはモデルから自動判定）。

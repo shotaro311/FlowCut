@@ -1,8 +1,8 @@
-from src.llm.workflows.workflow1 import build_pass1_prompt
+from src.llm.workflows.workflow2 import build_pass1_prompt
 from src.transcribe.base import WordTimestamp
 
 
-def test_workflow1_pass1_prompt_includes_glossary_and_political_terms():
+def test_workflow2_pass1_prompt_includes_glossary_and_political_terms():
     words = [
         WordTimestamp(word="菅", start=0.0, end=0.2),
         WordTimestamp(word="義偉", start=0.2, end=0.5),
@@ -16,4 +16,3 @@ def test_workflow1_pass1_prompt_includes_glossary_and_political_terms():
     assert "菅義偉" in prompt
     assert "参政党" in prompt
     assert "政治関連用語" in prompt
-

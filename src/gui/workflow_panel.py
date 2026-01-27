@@ -46,7 +46,7 @@ class WorkflowPanel(ttk.Frame):
         self.whisper_runner_var = tk.StringVar(value="openai")
 
         # LLM関連変数
-        self.workflow_var = tk.StringVar(value="workflow1")
+        self.workflow_var = tk.StringVar(value="workflow2")
         self.pass1_model_var = tk.StringVar()
         self.pass2_model_var = tk.StringVar()
         self.pass3_model_var = tk.StringVar()
@@ -159,7 +159,7 @@ class WorkflowPanel(ttk.Frame):
         workflow_combo.bind("<<ComboboxSelected>>", self._on_workflow_changed)
         ttk.Label(
             workflow_row,
-            text="workflow1: 通常  workflow2: 通常（分割並列）  workflow3: 校正→行分割",
+            text="workflow2: 標準（分割並列）",
             foreground="#888888",
         ).pack(side=tk.LEFT, padx=(8, 0))
 
@@ -570,7 +570,7 @@ class WorkflowPanel(ttk.Frame):
             whisper_runner=self.whisper_runner_var.get(),
             llm_provider=provider,
             llm_profile=None,
-            workflow=self.workflow_var.get() or "workflow1",
+            workflow=self.workflow_var.get() or "workflow2",
             pass1_model=self.pass1_model_var.get().strip() or None,
             pass2_model=self.pass2_model_var.get().strip() or None,
             pass3_model=self.pass3_model_var.get().strip() or None,

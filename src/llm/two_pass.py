@@ -401,7 +401,7 @@ class TwoPassFormatter:
         pass2_model: str | None = None,
         pass3_model: str | None = None,
         pass4_model: str | None = None,
-        workflow: str = "workflow1",
+        workflow: str = "workflow2",
         glossary_terms: Sequence[str] | None = None,
         *,
         run_id: str | None = None,
@@ -684,7 +684,7 @@ class TwoPassFormatter:
                     require_full_coverage=False,
                 )
                 if normalized is None:
-                    if self.workflow in ("workflow2", "workflow3"):
+                    if self.workflow == "workflow2":
                         logger.warning("pass2: invalid line coverage; proceeding to pass3")
                     else:
                         raise FormatterError("行分割結果の範囲（from/to）が不正です")

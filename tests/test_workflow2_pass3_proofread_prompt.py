@@ -14,7 +14,7 @@ def _words_for_demo():
     ]
 
 
-def test_workflow2_pass3_prompt_matches_workflow1(monkeypatch):
+def test_workflow2_pass3_prompt_does_not_include_glossary(monkeypatch):
     calls: list[tuple[str | None, str]] = []
 
     def fake_call_llm(self, payload: str, model_override=None, pass_label=None):

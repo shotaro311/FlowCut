@@ -88,7 +88,7 @@ python -m src.cli.main run /path/to/video.mp4 \
 | `--llm` | LLMプロバイダー指定 (google, openai, anthropic) | `--llm openai` |
 | `--llm-profile` | `config/llm_profiles.json` のプロファイルを使用 | `--llm-profile high_accuracy` |
 | `--start-delay` | 字幕全体の開始時間を遅らせる（秒）。冒頭の無音調整用 | `--start-delay 0.5` |
-| `--workflow` | 使用するワークフロー (`workflow1`, `workflow2`) | `--workflow workflow2` |
+| `--workflow` | 使用するワークフロー（`workflow2`。`workflow1`/`workflow3` 指定は `workflow2` にフォールバック） | `--workflow workflow2` |
 | `--keep-audio` | 動画から抽出した音声ファイルを保存する | `--keep-audio` |
 | `--simulate` | 音声認識をスキップし、ダミーデータでLLM整形のみテスト | `--simulate` (デフォルト有効) |
 | `--no-simulate` | 実際に音声認識(Whisper)を実行する | `--no-simulate` |

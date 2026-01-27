@@ -1,24 +1,11 @@
 from __future__ import annotations
 
 from src.llm.workflows.definition import WorkflowDefinition
-from src.llm.workflows.workflow1 import WORKFLOW as WORKFLOW1
+from src.llm.workflows.workflow2 import WORKFLOW as WORKFLOW2
 
-try:  # pragma: no cover - workflowは削除される可能性がある
-    from src.llm.workflows.workflow2 import WORKFLOW as WORKFLOW2  # type: ignore
-except Exception:  # pragma: no cover
-    WORKFLOW2 = None
+DEFAULT_WORKFLOW_SLUG = WORKFLOW2.slug
 
-try:  # pragma: no cover - workflowは削除される可能性がある
-    from src.llm.workflows.workflow3 import WORKFLOW as WORKFLOW3  # type: ignore
-except Exception:  # pragma: no cover
-    WORKFLOW3 = None
-
-DEFAULT_WORKFLOW_SLUG = WORKFLOW1.slug
-
-_WORKFLOWS: list[WorkflowDefinition] = [WORKFLOW1]
-for wf in [WORKFLOW2, WORKFLOW3]:
-    if isinstance(wf, WorkflowDefinition):
-        _WORKFLOWS.append(wf)
+_WORKFLOWS: list[WorkflowDefinition] = [WORKFLOW2]
 
 _BY_SLUG = {wf.slug: wf for wf in _WORKFLOWS}
 
@@ -35,8 +22,8 @@ def is_known_workflow(slug: str | None) -> bool:
 
 def get_workflow(slug: str | None) -> WorkflowDefinition:
     if slug is None:
-        return WORKFLOW1
+        return WORKFLOW2
     key = slug.strip().lower()
     if not key:
-        return WORKFLOW1
-    return _BY_SLUG.get(key, WORKFLOW1)
+        return WORKFLOW2
+    return _BY_SLUG.get(key, WORKFLOW2)
